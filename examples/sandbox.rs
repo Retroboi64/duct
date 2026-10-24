@@ -271,7 +271,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("[Sandbox] 'B' pressed: Testing Live Runtime Backend Switching...");
                 let next_pref = match duct.backend_type() {
                     duct::DuctBackendType::OpenGL => BackendPreference::Vulkan,
-                    duct::DuctBackendType::Vulkan => BackendPreference::DirectX12,
+                    duct::DuctBackendType::Vulkan => BackendPreference::DirectX11,
+                    duct::DuctBackendType::DirectX11 => BackendPreference::DirectX12,
                     _ => BackendPreference::OpenGL,
                 };
                 match duct.switch_backend(next_pref) {

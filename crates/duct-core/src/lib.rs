@@ -64,6 +64,7 @@ pub enum DuctBackendType {
     DirectX12 = 2,
     Vulkan = 3,
     Metal = 4,
+    DirectX11 = 5,
     Custom = 99,
 }
 
@@ -75,6 +76,7 @@ impl fmt::Display for DuctBackendType {
             DuctBackendType::DirectX12 => write!(f, "DirectX 12"),
             DuctBackendType::Vulkan => write!(f, "Vulkan"),
             DuctBackendType::Metal => write!(f, "Metal"),
+            DuctBackendType::DirectX11 => write!(f, "DirectX 11"),
             DuctBackendType::Custom => write!(f, "Custom"),
         }
     }

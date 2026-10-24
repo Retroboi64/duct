@@ -19,6 +19,7 @@ enum Action {
 struct BuildConfig {
     release: bool,
     build_gl: bool,
+    build_dx11: bool,
     build_dx12: bool,
     build_vk: bool,
 }
@@ -28,6 +29,7 @@ impl Default for BuildConfig {
         Self {
             release: false,
             build_gl: true,
+            build_dx11: true,
             build_dx12: true,
             build_vk: true,
         }
@@ -45,15 +47,15 @@ USAGE:
     cargo xtask help
 
 OPTIONS:
-    --all            Build all graphics backends (OpenGL, DirectX 12, Vulkan) [Default]
-    --only <API>     Build only specific backend: 'gl', 'dx12', 'vk' (comma-separated allowed)
+    --all            Build all graphics backends (OpenGL, DirectX 11, DirectX 12, Vulkan) [Default]
+    --only <API>     Build only specific backend: 'gl', 'dx11', 'dx12', 'vk' (comma-separated allowed)
     --release        Build artifacts with release optimizations
     -h, --help       Show this help message
 
 EXAMPLES:
     cargo xtask build --all
     cargo xtask build --only gl
-    cargo xtask build --only dx12,vk --release
+    cargo xtask build --only dx11,dx12,vk --release
     cargo xtask clean
 "#
     );
@@ -81,6 +83,7 @@ fn main() {
             "--release" => config.release = true,
             "--all" => {
                 config.build_gl = true;
+                config.build_dx11 = true;
                 config.build_dx12 = true;
                 config.build_vk = true;
                 explicit_only = false;
@@ -91,6 +94,7 @@ fn main() {
                     let targets = &args[i];
                     if !explicit_only {
                         config.build_gl = false;
+                        config.build_dx11 = false;
                         config.build_dx12 = false;
                         config.build_vk = false;
                         explicit_only = true;
@@ -98,6 +102,7 @@ fn main() {
                     for target in targets.split(',') {
                         match target.trim().to_lowercase().as_str() {
                             "gl" | "opengl" => config.build_gl = true,
+                            "dx11" | "d3d11" => config.build_dx11 = true,
                             "dx12" | "d3d12" => config.build_dx12 = true,
                             "vk" | "vulkan" => config.build_vk = true,
                             other => {
@@ -164,6 +169,9 @@ fn execute_build(config: &BuildConfig) {
     if config.build_gl {
         packages.push("glduct");
     }
+    if config.build_dx11 {
+        packages.push("dx11duct");
+    }
     if config.build_dx12 {
         packages.push("dx12duct");
     }
@@ -228,6 +236,7 @@ fn deploy_artifacts(config: &BuildConfig) {
     // Backend definitions: (flag, crate_raw_name, desired_module_name)
     let backends = [
         (config.build_gl, "glduct", "duct.gl"),
+        (config.build_dx11, "dx11duct", "duct.dx11"),
         (config.build_dx12, "dx12duct", "duct.dx12"),
         (config.build_vk, "vkduct", "duct.vk"),
     ];

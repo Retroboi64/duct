@@ -24,6 +24,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dx11duct"
+version = "0.1.0"
+dependencies = [
+ "duct-core",
+]
+
+[[package]]
 name = "dx12duct"
 version = "0.1.0"
 dependencies = [

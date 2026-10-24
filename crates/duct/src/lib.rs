@@ -228,6 +228,7 @@ impl std::error::Error for DuctError {}
 pub enum BackendPreference {
     Auto,
     OpenGL,
+    DirectX11,
     DirectX12,
     Vulkan,
 }
@@ -237,6 +238,7 @@ impl fmt::Display for BackendPreference {
         match self {
             BackendPreference::Auto => write!(f, "Auto"),
             BackendPreference::OpenGL => write!(f, "OpenGL"),
+            BackendPreference::DirectX11 => write!(f, "DirectX 11"),
             BackendPreference::DirectX12 => write!(f, "DirectX 12"),
             BackendPreference::Vulkan => write!(f, "Vulkan"),
         }
@@ -292,6 +294,9 @@ impl DuctBuilder {
             match arg.as_str() {
                 "--gl" | "--opengl" => {
                     self.preferred_backend = BackendPreference::OpenGL;
+                }
+                "--dx11" | "--d3d11" => {
+                    self.preferred_backend = BackendPreference::DirectX11;
                 }
                 "--dx12" | "--d3d12" => {
                     self.preferred_backend = BackendPreference::DirectX12;
@@ -1656,6 +1661,16 @@ fn determine_load_candidates(
         "libduct.gl.dylib",
         "libglduct.dylib",
     ];
+    const DX11_NAMES: &[&str] = &[
+        "duct.dx11.dll",
+        "dx11duct.dll",
+        "libduct.dx11.so",
+        "duct.dx11.so",
+        "libdx11duct.so",
+        "duct.dx11.dylib",
+        "libduct.dx11.dylib",
+        "libdx11duct.dylib",
+    ];
     const DX12_NAMES: &[&str] = &[
         "duct.dx12.dll",
         "dx12duct.dll",
@@ -1678,8 +1693,15 @@ fn determine_load_candidates(
     ];
 
     match pref {
+        BackendPreference::DirectX11 => vec![
+            (BackendPreference::DirectX11, DX11_NAMES),
+            (BackendPreference::DirectX12, DX12_NAMES),
+            (BackendPreference::OpenGL, GL_NAMES),
+            (BackendPreference::Vulkan, VK_NAMES),
+        ],
         BackendPreference::DirectX12 => vec![
             (BackendPreference::DirectX12, DX12_NAMES),
+            (BackendPreference::DirectX11, DX11_NAMES),
             (BackendPreference::OpenGL, GL_NAMES),
             (BackendPreference::Vulkan, VK_NAMES),
         ],
@@ -1687,11 +1709,13 @@ fn determine_load_candidates(
             (BackendPreference::Vulkan, VK_NAMES),
             (BackendPreference::OpenGL, GL_NAMES),
             (BackendPreference::DirectX12, DX12_NAMES),
+            (BackendPreference::DirectX11, DX11_NAMES),
         ],
         BackendPreference::OpenGL => vec![
             (BackendPreference::OpenGL, GL_NAMES),
             (BackendPreference::Vulkan, VK_NAMES),
             (BackendPreference::DirectX12, DX12_NAMES),
+            (BackendPreference::DirectX11, DX11_NAMES),
         ],
         BackendPreference::Auto => {
             #[cfg(target_os = "windows")]
@@ -1700,6 +1724,7 @@ fn determine_load_candidates(
                     (BackendPreference::OpenGL, GL_NAMES),
                     (BackendPreference::Vulkan, VK_NAMES),
                     (BackendPreference::DirectX12, DX12_NAMES),
+                    (BackendPreference::DirectX11, DX11_NAMES),
                 ]
             }
             #[cfg(not(target_os = "windows"))]
@@ -2296,6 +2321,7 @@ pub extern "C" fn duct_switch_backend(
         1 => BackendPreference::OpenGL,
         2 => BackendPreference::DirectX12,
         3 => BackendPreference::Vulkan,
+        5 => BackendPreference::DirectX11,
         _ => BackendPreference::Auto,
     };
     let duct = unsafe { &mut *handle };
@@ -2568,10 +2594,17 @@ mod tests {
     }
 
     #[test]
+    fn test_candidate_order_dx11() {
+        let candidates = determine_load_candidates(BackendPreference::DirectX11);
+        assert_eq!(candidates[0].0, BackendPreference::DirectX11);
+        assert_eq!(candidates[1].0, BackendPreference::DirectX12);
+    }
+
+    #[test]
     fn test_candidate_order_dx12() {
         let candidates = determine_load_candidates(BackendPreference::DirectX12);
         assert_eq!(candidates[0].0, BackendPreference::DirectX12);
-        assert_eq!(candidates[1].0, BackendPreference::OpenGL);
+        assert_eq!(candidates[1].0, BackendPreference::DirectX11);
     }
 
     #[test]

@@ -49,6 +49,7 @@ typedef enum DuctBackendType {
     DUCT_BACKEND_DIRECTX12 = 2,
     DUCT_BACKEND_VULKAN = 3,
     DUCT_BACKEND_METAL = 4,
+    DUCT_BACKEND_DIRECTX11 = 5,
     DUCT_BACKEND_CUSTOM = 99
 } DuctBackendType;
 
@@ -282,7 +283,7 @@ DUCT_API DuctResult duct_create_from_args(DuctWindowHandle window, DuctHandle* o
 DUCT_API void duct_destroy(DuctHandle handle);
 
 /**
- * Live switches the active graphics backend (1=OpenGL, 2=DirectX12, 3=Vulkan, 0=Auto)
+ * Live switches the active graphics backend (1=OpenGL, 2=DirectX12, 3=Vulkan, 5=DirectX11, 0=Auto)
  * at runtime on the same attached window without crashing.
  */
 DUCT_API DuctResult duct_switch_backend(DuctHandle handle, uint32_t preference);

@@ -3,6 +3,7 @@ members = [
     "crates/duct-core",
     "crates/duct",
     "crates/glduct",
+    "crates/dx11duct",
     "crates/dx12duct",
     "crates/vkduct",
     "xtask",

@@ -24,6 +24,7 @@ namespace Project32.Duct
         DirectX12 = 2,
         Vulkan = 3,
         Metal = 4,
+        DirectX11 = 5,
         Custom = 99
     }
 

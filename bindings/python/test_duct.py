@@ -66,11 +66,35 @@ stats = duct.get_frame_stats()
 print(f"[Python Test] Telemetry: FPS={stats['fps']:.1f}, DrawCalls={stats['draw_calls']}, Triangles={stats['triangles_rendered']}")
 
 # 9. Test Live Backend Switching
+print("[Python Test] Testing Live Backend Switching to DirectX 11...")
+duct.switch_backend(5) # DirectX 11
+print(f"[Python Test] Switched Backend: {duct.backend_name}")
+
+# 10. Test Base Shape Drawing on DirectX 11
+duct.begin_frame(0.1, 0.1, 0.2, 1.0)
+duct.draw_triangle(0.0, 0.5, -0.5, -0.5, 0.5, -0.5, 1.0, 0.5, 0.2, 1.0)
+duct.draw_rect(-0.8, 0.4, 0.3, 0.3, 0.2, 0.85, 0.4, 1.0)
+duct.draw_circle(0.6, 0.5, 0.2, 32, 0.2, 0.7, 1.0, 1.0)
+duct.end_frame()
+duct.present()
+
+print("[Python Test] Testing Live Backend Switching to DirectX 12...")
+duct.switch_backend(2) # DirectX 12
+print(f"[Python Test] Switched Backend: {duct.backend_name}")
+
+# 11. Test Base Shape Drawing on DirectX 12
+duct.begin_frame(0.1, 0.1, 0.2, 1.0)
+duct.draw_triangle(0.0, 0.5, -0.5, -0.5, 0.5, -0.5, 1.0, 0.5, 0.2, 1.0)
+duct.draw_rect(-0.8, 0.4, 0.3, 0.3, 0.2, 0.85, 0.4, 1.0)
+duct.draw_circle(0.6, 0.5, 0.2, 32, 0.2, 0.7, 1.0, 1.0)
+duct.end_frame()
+duct.present()
+
 print("[Python Test] Testing Live Backend Switching to Vulkan...")
 duct.switch_backend(3) # Vulkan
 print(f"[Python Test] Switched Backend: {duct.backend_name}")
 
-# 10. Test Base Shape Drawing on Vulkan
+# 12. Test Base Shape Drawing on Vulkan
 duct.begin_frame(0.1, 0.1, 0.2, 1.0)
 duct.draw_triangle(0.0, 0.5, -0.5, -0.5, 0.5, -0.5, 1.0, 0.5, 0.2, 1.0)
 duct.draw_rect(-0.8, 0.4, 0.3, 0.3, 0.2, 0.85, 0.4, 1.0)

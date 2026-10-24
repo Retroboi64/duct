@@ -1,0 +1,11 @@
+[package]
+name = "dx11duct"
+version = "0.1.0"
+edition = "2021"
+description = "DirectX 11 graphics pipeline module for duct"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+duct-core = { path = "../duct-core" }
