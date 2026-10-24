@@ -141,8 +141,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Render one test pass into the offscreen buffer
             let _ = duct.bind_render_target(rt);
             let _ = duct.begin_frame(DuctColor::rgba(0.2, 0.0, 0.4, 1.0));
+            let _ = duct.bind_vertex_buffer(vbo_handle);
+            let _ = duct.set_uniform_vec4("uColor", 1.0, 0.55, 0.1, 1.0);
             let _ = duct.draw(3, 0);
             let _ = duct.end_frame();
+            let mut center_px = [0u8; 4];
+            let _ = duct.read_pixels(320, 240, 1, 1, &mut center_px);
+            println!(
+                "          -> Offscreen FBO Center Pixel Readback (RGBA): {:?}",
+                center_px
+            );
             let _ = duct.bind_render_target(duct::DuctRenderTargetHandle::INVALID);
             Some(rt)
         }
@@ -151,6 +159,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
+
+    // Create an indexed quad buffer for bottom-right base shape demonstration
+    let (quad_vbo, quad_ibo) = duct.create_rect_buffers(0.55, -0.82, 0.32, 0.32)?;
 
     // ── 6. Test Shader Hot-Reloading ──────────────────────────────────────
     println!("\n[Sandbox] Test 6: Testing live shader hot-reloading...");
@@ -288,14 +299,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return ControlFlow::Exit;
                 }
 
-                // Update animated uniform color
-                let _ = duct.set_uniform_vec4("uColor", 0.8 + 0.2 * t.cos(), 0.5 + 0.3 * t.sin(), 0.2, 1.0);
-
-                // Draw the geometry on the GPU
+                // 1. Draw the central animated triangle on the GPU
+                let _ = duct.bind_vertex_buffer(vbo_handle);
+                let _ = duct.set_uniform_vec4("uColor", 0.9 + 0.1 * t.cos(), 0.55 + 0.25 * t.sin(), 0.15, 1.0);
                 if let Err(e) = duct.draw(3, 0) {
                     eprintln!("draw error: {}", e);
                     return ControlFlow::Exit;
                 }
+
+                // 2. Draw base shapes (Rectangle, Circle, Triangle, and Indexed Quad)
+                let _ = duct.draw_rect(
+                    -0.88,
+                    0.48,
+                    0.34,
+                    0.34,
+                    DuctColor::rgba(0.2, 0.85, 0.45, 1.0),
+                );
+                let _ = duct.draw_circle(
+                    0.72,
+                    0.65,
+                    0.18,
+                    36,
+                    DuctColor::rgba(0.2, 0.7, 0.95, 1.0),
+                );
+                let _ = duct.draw_triangle(
+                    [-0.72, -0.48, 0.0],
+                    [-0.90, -0.84, 0.0],
+                    [-0.54, -0.84, 0.0],
+                    DuctColor::rgba(0.95, 0.3, 0.65, 1.0),
+                );
+
+                // Indexed quad in bottom-right corner
+                let _ = duct.bind_vertex_buffer(quad_vbo);
+                let _ = duct.bind_index_buffer(quad_ibo, DuctIndexFormat::U16);
+                let _ = duct.set_uniform_vec4("uColor", 0.95, 0.85, 0.2, 1.0);
+                let _ = duct.draw_indexed(6, 0);
 
                 if let Err(e) = duct.end_frame() {
                     eprintln!("end_frame error: {}", e);
@@ -331,6 +369,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(rt) = rt_handle {
                         let _ = duct.destroy_render_target(rt);
                     }
+                    let _ = duct.destroy_buffer(quad_vbo);
+                    let _ = duct.destroy_buffer(quad_ibo);
                     let _ = duct.destroy_buffer(vbo_handle);
                     let _ = duct.destroy_shader(vs_handle);
                     let _ = duct.destroy_shader(fs_handle);

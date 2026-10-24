@@ -270,6 +270,15 @@ namespace Project32.Duct
         public static extern DuctResult duct_draw_indexed_instanced(IntPtr handle, uint indexCount, uint instanceCount, uint firstIndex, DuctIndexFormat indexFormat);
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern DuctResult duct_draw_triangle(IntPtr handle, float x0, float y0, float x1, float y1, float x2, float y2, DuctColor color);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern DuctResult duct_draw_rect(IntPtr handle, float x, float y, float width, float height, DuctColor color);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern DuctResult duct_draw_circle(IntPtr handle, float centerX, float centerY, float radius, uint segments, DuctColor color);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern DuctResult duct_get_frame_stats(IntPtr handle, out DuctFrameStats outStats);
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]

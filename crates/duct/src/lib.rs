@@ -540,6 +540,9 @@ pub struct Duct {
     debug_mode: bool,
     app_name: String,
     renderer_dir: PathBuf,
+    shape_vbo: DuctBufferHandle,
+    shape_vertex_cursor: u32,
+    last_bound_user_vbo: DuctBufferHandle,
 }
 
 unsafe impl Send for Duct {}
@@ -605,6 +608,7 @@ impl Duct {
 
     /// Begins a new frame with the specified clear color.
     pub fn begin_frame(&mut self, clear_color: DuctColor) -> Result<(), DuctError> {
+        self.shape_vertex_cursor = 0;
         let v = self.vtable();
         let res = unsafe { (v.begin_frame)(v.context, clear_color) };
         if res.is_ok() {
@@ -698,6 +702,9 @@ impl Duct {
         let v = self.vtable();
         let res = unsafe { (v.create_buffer)(v.context, &desc, &mut handle) };
         if res.is_ok() {
+            if buffer_type == DuctBufferType::Vertex {
+                self.last_bound_user_vbo = handle;
+            }
             Ok(handle)
         } else {
             Err(DuctError::PipelineOperationFailed(res))
@@ -717,6 +724,12 @@ impl Duct {
 
     /// Destroys an allocated buffer.
     pub fn destroy_buffer(&mut self, handle: DuctBufferHandle) -> Result<(), DuctError> {
+        if self.last_bound_user_vbo == handle {
+            self.last_bound_user_vbo = DuctBufferHandle::INVALID;
+        }
+        if self.shape_vbo == handle {
+            self.shape_vbo = DuctBufferHandle::INVALID;
+        }
         let v = self.vtable();
         let res = unsafe { (v.destroy_buffer)(v.context, handle) };
         if res.is_ok() {
@@ -1015,6 +1028,9 @@ impl Duct {
 
     /// Binds a vertex buffer as the active geometry stream.
     pub fn bind_vertex_buffer(&mut self, handle: DuctBufferHandle) -> Result<(), DuctError> {
+        if handle != self.shape_vbo {
+            self.last_bound_user_vbo = handle;
+        }
         let v = self.vtable();
         let res = unsafe { (v.bind_vertex_buffer)(v.context, handle) };
         if res.is_ok() {
@@ -1210,6 +1226,9 @@ impl Duct {
         };
 
         // Gracefully shutdown current backend
+        self.shape_vbo = DuctBufferHandle::INVALID;
+        self.shape_vertex_cursor = 0;
+        self.last_bound_user_vbo = DuctBufferHandle::INVALID;
         if !self.vtable.is_null() {
             unsafe {
                 let v = &*self.vtable;
@@ -1333,6 +1352,225 @@ impl Duct {
         } else {
             Err(DuctError::PipelineOperationFailed(res))
         }
+    }
+
+    // ── Base Shape Geometry & Immediate Drawing Helpers ──────────────────────
+
+    const SHAPE_VBO_MAX_VERTICES: u32 = 4096;
+
+    fn draw_shape_vertices(
+        &mut self,
+        vertices: &[f32],
+        color: DuctColor,
+    ) -> Result<(), DuctError> {
+        let vertex_count = (vertices.len() / 3) as u32;
+        if vertex_count == 0 {
+            return Ok(());
+        }
+
+        let prev_user_vbo = self.last_bound_user_vbo;
+
+        if !self.shape_vbo.is_valid() {
+            let cap_bytes = (Self::SHAPE_VBO_MAX_VERTICES as usize) * 12;
+            let desc = DuctBufferDesc {
+                buffer_type: DuctBufferType::Vertex,
+                size_bytes: cap_bytes,
+                initial_data: std::ptr::null(),
+                is_dynamic: true,
+            };
+            let mut handle = DuctBufferHandle::INVALID;
+            let v = self.vtable();
+            let res = unsafe { (v.create_buffer)(v.context, &desc, &mut handle) };
+            if res.is_err() {
+                return Err(DuctError::PipelineOperationFailed(res));
+            }
+            self.shape_vbo = handle;
+        }
+
+        if self.shape_vertex_cursor + vertex_count > Self::SHAPE_VBO_MAX_VERTICES {
+            self.shape_vertex_cursor = 0;
+        }
+
+        let first_vertex = self.shape_vertex_cursor;
+        let byte_offset = (first_vertex as usize) * 12;
+        let byte_slice = unsafe {
+            std::slice::from_raw_parts(
+                vertices.as_ptr() as *const u8,
+                std::mem::size_of_val(vertices),
+            )
+        };
+
+        self.update_buffer(self.shape_vbo, byte_offset, byte_slice)?;
+        let v = self.vtable();
+        let _ = unsafe { (v.bind_vertex_buffer)(v.context, self.shape_vbo) };
+        self.set_uniform_vec4("uColor", color.r, color.g, color.b, color.a)?;
+        self.draw(vertex_count, first_vertex)?;
+        self.shape_vertex_cursor += vertex_count;
+
+        if prev_user_vbo.is_valid() {
+            let v = self.vtable();
+            let _ = unsafe { (v.bind_vertex_buffer)(v.context, prev_user_vbo) };
+            self.last_bound_user_vbo = prev_user_vbo;
+        }
+
+        Ok(())
+    }
+
+    /// Immediately draws a 2D/3D triangle in normalized device coordinates `[-1.0, 1.0]`.
+    pub fn draw_triangle(
+        &mut self,
+        p0: [f32; 3],
+        p1: [f32; 3],
+        p2: [f32; 3],
+        color: DuctColor,
+    ) -> Result<(), DuctError> {
+        let verts = [
+            p0[0], p0[1], p0[2],
+            p1[0], p1[1], p1[2],
+            p2[0], p2[1], p2[2],
+        ];
+        self.draw_shape_vertices(&verts, color)
+    }
+
+    /// Immediately draws a filled axis-aligned rectangle (2 triangles, 6 vertices) in NDC `[-1.0, 1.0]`.
+    /// `(x, y)` is the bottom-left corner and `(width, height)` are the dimensions in NDC.
+    pub fn draw_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: DuctColor,
+    ) -> Result<(), DuctError> {
+        let x0 = x;
+        let y0 = y;
+        let x1 = x + width;
+        let y1 = y + height;
+        let verts = [
+            // Triangle 1
+            x0, y0, 0.0,
+            x1, y0, 0.0,
+            x1, y1, 0.0,
+            // Triangle 2
+            x0, y0, 0.0,
+            x1, y1, 0.0,
+            x0, y1, 0.0,
+        ];
+        self.draw_shape_vertices(&verts, color)
+    }
+
+    /// Immediately draws a filled circle or regular polygon (triangle fan decomposed into `segments` triangles)
+    /// in NDC `[-1.0, 1.0]`.
+    pub fn draw_circle(
+        &mut self,
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+        segments: u32,
+        color: DuctColor,
+    ) -> Result<(), DuctError> {
+        let segs = segments.clamp(3, 256);
+        let mut verts = Vec::with_capacity((segs as usize) * 9);
+        let step = std::f32::consts::TAU / (segs as f32);
+        for i in 0..segs {
+            let a0 = (i as f32) * step;
+            let a1 = ((i + 1) as f32) * step;
+            verts.extend_from_slice(&[
+                center_x,
+                center_y,
+                0.0,
+                center_x + radius * a0.cos(),
+                center_y + radius * a0.sin(),
+                0.0,
+                center_x + radius * a1.cos(),
+                center_y + radius * a1.sin(),
+                0.0,
+            ]);
+        }
+        self.draw_shape_vertices(&verts, color)
+    }
+
+    /// Allocates a static GPU vertex buffer containing a single triangle (`3` vertices, `Float3`).
+    pub fn create_triangle_buffer(
+        &mut self,
+        p0: [f32; 3],
+        p1: [f32; 3],
+        p2: [f32; 3],
+    ) -> Result<DuctBufferHandle, DuctError> {
+        let verts: [f32; 9] = [
+            p0[0], p0[1], p0[2],
+            p1[0], p1[1], p1[2],
+            p2[0], p2[1], p2[2],
+        ];
+        let bytes = unsafe {
+            std::slice::from_raw_parts(verts.as_ptr() as *const u8, std::mem::size_of_val(&verts))
+        };
+        self.create_buffer(DuctBufferType::Vertex, bytes.len(), Some(bytes), false)
+    }
+
+    /// Allocates static GPU vertex and index (`U16`) buffers for a quad/rectangle (`4` vertices, `6` indices).
+    pub fn create_rect_buffers(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Result<(DuctBufferHandle, DuctBufferHandle), DuctError> {
+        let verts: [f32; 12] = [
+            x,         y,          0.0,
+            x + width, y,          0.0,
+            x + width, y + height, 0.0,
+            x,         y + height, 0.0,
+        ];
+        let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+        let v_bytes = unsafe {
+            std::slice::from_raw_parts(verts.as_ptr() as *const u8, std::mem::size_of_val(&verts))
+        };
+        let i_bytes = unsafe {
+            std::slice::from_raw_parts(
+                indices.as_ptr() as *const u8,
+                std::mem::size_of_val(&indices),
+            )
+        };
+        let vbo = self.create_buffer(DuctBufferType::Vertex, v_bytes.len(), Some(v_bytes), false)?;
+        let ibo = self.create_buffer(DuctBufferType::Index, i_bytes.len(), Some(i_bytes), false)?;
+        Ok((vbo, ibo))
+    }
+
+    /// Allocates a static GPU vertex buffer for a filled circle (`segments * 3` vertices) and returns `(vbo, vertex_count)`.
+    pub fn create_circle_buffer(
+        &mut self,
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+        segments: u32,
+    ) -> Result<(DuctBufferHandle, u32), DuctError> {
+        let segs = segments.clamp(3, 256);
+        let mut verts = Vec::with_capacity((segs as usize) * 9);
+        let step = std::f32::consts::TAU / (segs as f32);
+        for i in 0..segs {
+            let a0 = (i as f32) * step;
+            let a1 = ((i + 1) as f32) * step;
+            verts.extend_from_slice(&[
+                center_x,
+                center_y,
+                0.0,
+                center_x + radius * a0.cos(),
+                center_y + radius * a0.sin(),
+                0.0,
+                center_x + radius * a1.cos(),
+                center_y + radius * a1.sin(),
+                0.0,
+            ]);
+        }
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                verts.as_ptr() as *const u8,
+                verts.len() * std::mem::size_of::<f32>(),
+            )
+        };
+        let vbo = self.create_buffer(DuctBufferType::Vertex, bytes.len(), Some(bytes), false)?;
+        Ok((vbo, segs * 3))
     }
 }
 
@@ -1546,6 +1784,9 @@ fn load_pipeline_from_dll(path: &Path, builder: &DuctBuilder, renderer_dir: &Pat
         debug_mode: builder.debug_mode,
         app_name: builder.app_name.clone(),
         renderer_dir: renderer_dir.to_path_buf(),
+        shape_vbo: DuctBufferHandle::INVALID,
+        shape_vertex_cursor: 0,
+        last_bound_user_vbo: DuctBufferHandle::INVALID,
     })
 }
 
@@ -2254,6 +2495,62 @@ pub extern "C" fn duct_dispatch_compute(
     if handle.is_null() { return DuctResult::ErrorInvalidParameter; }
     let duct = unsafe { &mut *handle };
     match duct.dispatch_compute(groups_x, groups_y, groups_z) {
+        Ok(()) => DuctResult::Success,
+        Err(DuctError::PipelineOperationFailed(r)) => r,
+        Err(_) => DuctResult::ErrorGeneric,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn duct_draw_triangle(
+    handle: *mut Duct,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    color: DuctColor,
+) -> DuctResult {
+    if handle.is_null() { return DuctResult::ErrorInvalidParameter; }
+    let duct = unsafe { &mut *handle };
+    match duct.draw_triangle([x0, y0, 0.0], [x1, y1, 0.0], [x2, y2, 0.0], color) {
+        Ok(()) => DuctResult::Success,
+        Err(DuctError::PipelineOperationFailed(r)) => r,
+        Err(_) => DuctResult::ErrorGeneric,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn duct_draw_rect(
+    handle: *mut Duct,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: DuctColor,
+) -> DuctResult {
+    if handle.is_null() { return DuctResult::ErrorInvalidParameter; }
+    let duct = unsafe { &mut *handle };
+    match duct.draw_rect(x, y, width, height, color) {
+        Ok(()) => DuctResult::Success,
+        Err(DuctError::PipelineOperationFailed(r)) => r,
+        Err(_) => DuctResult::ErrorGeneric,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn duct_draw_circle(
+    handle: *mut Duct,
+    center_x: f32,
+    center_y: f32,
+    radius: f32,
+    segments: u32,
+    color: DuctColor,
+) -> DuctResult {
+    if handle.is_null() { return DuctResult::ErrorInvalidParameter; }
+    let duct = unsafe { &mut *handle };
+    match duct.draw_circle(center_x, center_y, radius, segments, color) {
         Ok(()) => DuctResult::Success,
         Err(DuctError::PipelineOperationFailed(r)) => r,
         Err(_) => DuctResult::ErrorGeneric,

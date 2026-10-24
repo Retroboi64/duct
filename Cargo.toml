@@ -10,10 +10,9 @@ members = [
 resolver = "2"
 
 [package]
-name = "project32-duct"
+name = "duct-workspace"
 version = "0.1.0"
 edition = "2021"
-publish = false
 
 [dependencies]
 duct = { path = "crates/duct" }

@@ -345,6 +345,12 @@ DUCT_API DuctResult duct_draw_indexed(DuctHandle handle, uint32_t index_count, u
 DUCT_API DuctResult duct_draw_instanced(DuctHandle handle, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance);
 DUCT_API DuctResult duct_draw_indexed_instanced(DuctHandle handle, uint32_t index_count, uint32_t instance_count, uint32_t first_index, DuctIndexFormat index_format);
 
+/* ── Base Shape Drawing Helpers ──────────────────────────────────────── */
+
+DUCT_API DuctResult duct_draw_triangle(DuctHandle handle, float x0, float y0, float x1, float y1, float x2, float y2, DuctColor color);
+DUCT_API DuctResult duct_draw_rect(DuctHandle handle, float x, float y, float width, float height, DuctColor color);
+DUCT_API DuctResult duct_draw_circle(DuctHandle handle, float center_x, float center_y, float radius, uint32_t segments, DuctColor color);
+
 /* ── Telemetry & Escape Hatch ────────────────────────────────────────── */
 
 DUCT_API DuctResult duct_get_frame_stats(DuctHandle handle, DuctFrameStats* out_stats);
