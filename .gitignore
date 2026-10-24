@@ -1,0 +1,12 @@
+/target/
+/renderer/
+**/*.rs.bk
+*.pdb
+*.exp
+*.lib
+*.dll
+*.so
+*.dylib
+__pycache__/
+*.pyc
+

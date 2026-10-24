@@ -1,0 +1,7 @@
+[package]
+name = "duct-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core C-ABI vtable interface and common types for Project32 duct graphics pipeline"
+
+[dependencies]

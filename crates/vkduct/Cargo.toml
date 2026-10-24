@@ -1,0 +1,11 @@
+[package]
+name = "vkduct"
+version = "0.1.0"
+edition = "2021"
+description = "Vulkan graphics pipeline module for duct"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+duct-core = { path = "../duct-core" }

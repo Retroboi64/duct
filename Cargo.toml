@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "crates/duct-core",
+    "crates/duct",
+    "crates/glduct",
+    "crates/dx12duct",
+    "crates/vkduct",
+    "xtask",
+]
+resolver = "2"
+
+[package]
+name = "project32-duct"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+duct = { path = "crates/duct" }
+duct-core = { path = "crates/duct-core" }
+windowed = { path = "../windowed" }
+
+[[bin]]
+name = "build_dist"
+path = "build_dist.rs"
+
+[[example]]
+name = "sandbox"
+path = "examples/sandbox.rs"
