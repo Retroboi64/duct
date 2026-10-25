@@ -3,23 +3,23 @@
 version = 4
 
 [[package]]
-name = "duct-core"
-version = "0.1.0"
-
-[[package]]
 name = "duct-graphics"
 version = "0.1.0"
 dependencies = [
- "duct-core",
+ "duct-graphics-core",
  "windowed",
 ]
+
+[[package]]
+name = "duct-graphics-core"
+version = "0.1.0"
 
 [[package]]
 name = "duct-workspace"
 version = "0.1.0"
 dependencies = [
- "duct-core",
  "duct-graphics",
+ "duct-graphics-core",
  "windowed",
 ]
 
@@ -27,28 +27,28 @@ dependencies = [
 name = "dx11duct"
 version = "0.1.0"
 dependencies = [
- "duct-core",
+ "duct-graphics-core",
 ]
 
 [[package]]
 name = "dx12duct"
 version = "0.1.0"
 dependencies = [
- "duct-core",
+ "duct-graphics-core",
 ]
 
 [[package]]
 name = "glduct"
 version = "0.1.0"
 dependencies = [
- "duct-core",
+ "duct-graphics-core",
 ]
 
 [[package]]
 name = "vkduct"
 version = "0.1.0"
 dependencies = [
- "duct-core",
+ "duct-graphics-core",
 ]
 
 [[package]]

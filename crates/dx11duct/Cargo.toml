@@ -16,4 +16,4 @@ readme = "README.md"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-duct-core = { path = "../duct-core", version = "0.1.0" }
+duct-core = { package = "duct-graphics-core", path = "../duct-core", version = "0.1.0" }

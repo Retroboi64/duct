@@ -1,15 +1,18 @@
 [package]
-name = "duct-core"
+name = "duct-graphics-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
+documentation = "https://docs.rs/duct-graphics-core"
 keywords.workspace = true
 categories.workspace = true
 description = "Core C-ABI vtable interface and common types for Project32 duct graphics pipeline"
 readme = "README.md"
+
+[lib]
+name = "duct_core"
 
 [dependencies]

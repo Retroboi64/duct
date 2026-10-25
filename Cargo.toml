@@ -22,7 +22,7 @@ keywords = ["graphics", "rendering", "vulkan", "opengl", "directx"]
 categories = ["rendering::engine", "graphics", "game-development"]
 
 [workspace.dependencies]
-duct-core = { path = "crates/duct-core", version = "0.1.0" }
+duct-core = { package = "duct-graphics-core", path = "crates/duct-core", version = "0.1.0" }
 duct-graphics = { path = "crates/duct", version = "0.1.0" }
 glduct = { path = "crates/glduct", version = "0.1.0" }
 vkduct = { path = "crates/vkduct", version = "0.1.0" }
