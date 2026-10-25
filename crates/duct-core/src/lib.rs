@@ -95,6 +95,15 @@ pub struct DuctColor {
 impl DuctColor {
     pub const BLACK: Self = Self { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
     pub const WHITE: Self = Self { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
+    pub const RED: Self = Self { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
+    pub const GREEN: Self = Self { r: 0.0, g: 1.0, b: 0.0, a: 1.0 };
+    pub const BLUE: Self = Self { r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
+    pub const YELLOW: Self = Self { r: 1.0, g: 1.0, b: 0.0, a: 1.0 };
+    pub const CYAN: Self = Self { r: 0.0, g: 1.0, b: 1.0, a: 1.0 };
+    pub const MAGENTA: Self = Self { r: 1.0, g: 0.0, b: 1.0, a: 1.0 };
+    pub const ORANGE: Self = Self { r: 1.0, g: 0.55, b: 0.0, a: 1.0 };
+    pub const GRAY: Self = Self { r: 0.5, g: 0.5, b: 0.5, a: 1.0 };
+    pub const TRANSPARENT: Self = Self { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
     pub const CORNFLOWER_BLUE: Self = Self { r: 0.392, g: 0.584, b: 0.929, a: 1.0 };
 
     #[inline]
@@ -105,6 +114,31 @@ impl DuctColor {
     #[inline]
     pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
         Self { r, g, b, a: 1.0 }
+    }
+
+    #[inline]
+    pub const fn from_rgba_u8(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self {
+            r: (r as f32) / 255.0,
+            g: (g as f32) / 255.0,
+            b: (b as f32) / 255.0,
+            a: (a as f32) / 255.0,
+        }
+    }
+
+    #[inline]
+    pub fn to_rgba_u8(self) -> [u8; 4] {
+        [
+            (self.r.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (self.g.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (self.b.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (self.a.clamp(0.0, 1.0) * 255.0).round() as u8,
+        ]
+    }
+
+    #[inline]
+    pub const fn to_array(self) -> [f32; 4] {
+        [self.r, self.g, self.b, self.a]
     }
 }
 
@@ -1466,16 +1500,27 @@ pub fn build_vtable_from_pipeline<T: RenderPipeline>(pipeline: T) -> *mut DuctPi
     Box::into_raw(vtable)
 }
 
-/// Macro to export C entry points `duct_create_pipeline` and `duct_destroy_pipeline` for any pipeline type.
+/// Macro to export entry points `duct_create_pipeline` and `duct_destroy_pipeline` for any pipeline type.
 #[macro_export]
 macro_rules! export_pipeline {
-    ($pipeline_type:ty) => {
-        #[no_mangle]
-        pub extern "C" fn duct_create_pipeline() -> *mut $crate::DuctPipelineVTable {
+    ($pipeline_type:ty, $specific_name:ident) => {
+        pub fn create_pipeline_vtable() -> *mut $crate::DuctPipelineVTable {
             let instance = <$pipeline_type>::default();
             $crate::build_vtable_from_pipeline(instance)
         }
 
+        #[no_mangle]
+        pub extern "C" fn $specific_name() -> *mut $crate::DuctPipelineVTable {
+            create_pipeline_vtable()
+        }
+
+        #[cfg(not(feature = "bundled"))]
+        #[no_mangle]
+        pub extern "C" fn duct_create_pipeline() -> *mut $crate::DuctPipelineVTable {
+            create_pipeline_vtable()
+        }
+
+        #[cfg(not(feature = "bundled"))]
         #[no_mangle]
         pub extern "C" fn duct_destroy_pipeline(vtable: *mut $crate::DuctPipelineVTable) {
             if !vtable.is_null() {
@@ -1485,6 +1530,9 @@ macro_rules! export_pipeline {
                 }
             }
         }
+    };
+    ($pipeline_type:ty) => {
+        $crate::export_pipeline!($pipeline_type, duct_create_pipeline);
     };
 }
 
@@ -1599,8 +1647,19 @@ mod tests {
         assert_eq!(DuctColor::BLACK.r, 0.0);
         assert_eq!(DuctColor::BLACK.a, 1.0);
         assert_eq!(DuctColor::WHITE.r, 1.0);
-        let c = DuctColor::rgb(0.5, 0.5, 0.5);
-        assert_eq!(c.a, 1.0);
+        assert_eq!(DuctColor::RED.r, 1.0);
+        assert_eq!(DuctColor::RED.g, 0.0);
+        assert_eq!(DuctColor::GREEN.g, 1.0);
+        assert_eq!(DuctColor::BLUE.b, 1.0);
+        assert_eq!(DuctColor::TRANSPARENT.a, 0.0);
+
+        let c = DuctColor::from_rgba_u8(255, 128, 0, 255);
+        assert_eq!(c.to_rgba_u8()[0], 255);
+        assert_eq!(c.to_rgba_u8()[3], 255);
+        assert_eq!(c.to_array()[0], 1.0);
+
+        let rgb = DuctColor::rgb(0.5, 0.5, 0.5);
+        assert_eq!(rgb.a, 1.0);
     }
 
     #[test]

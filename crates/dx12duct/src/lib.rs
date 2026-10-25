@@ -2802,4 +2802,4 @@ impl RenderPipeline for Dx12Pipeline {
     }
 }
 
-export_pipeline!(Dx12Pipeline);
+export_pipeline!(Dx12Pipeline, dx12duct_create_pipeline);

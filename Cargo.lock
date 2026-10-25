@@ -7,6 +7,10 @@ name = "duct-graphics"
 version = "0.1.0"
 dependencies = [
  "duct-graphics-core",
+ "dx11duct",
+ "dx12duct",
+ "glduct",
+ "vkduct",
  "windowed",
 ]
 

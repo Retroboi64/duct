@@ -351,6 +351,9 @@ DUCT_API DuctResult duct_draw_indexed_instanced(DuctHandle handle, uint32_t inde
 DUCT_API DuctResult duct_draw_triangle(DuctHandle handle, float x0, float y0, float x1, float y1, float x2, float y2, DuctColor color);
 DUCT_API DuctResult duct_draw_rect(DuctHandle handle, float x, float y, float width, float height, DuctColor color);
 DUCT_API DuctResult duct_draw_circle(DuctHandle handle, float center_x, float center_y, float radius, uint32_t segments, DuctColor color);
+DUCT_API DuctResult duct_draw_line(DuctHandle handle, float x0, float y0, float x1, float y1, float thickness, DuctColor color);
+DUCT_API DuctResult duct_draw_rect_outline(DuctHandle handle, float x, float y, float width, float height, float line_thickness, DuctColor color);
+DUCT_API DuctResult duct_draw_circle_outline(DuctHandle handle, float center_x, float center_y, float radius, float line_thickness, uint32_t segments, DuctColor color);
 
 /* ── Telemetry & Escape Hatch ────────────────────────────────────────── */
 

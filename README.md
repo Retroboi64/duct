@@ -14,7 +14,10 @@
   - **DirectX 11 (`dx11duct`)**: Hardware `D3D11CreateDeviceAndSwapChain` (Feature Level 11_0+), runtime HLSL compilation via `d3dcompiler_47.dll` (`vs_5_0`, `ps_5_0`, `cs_5_0`), input layouts, rasterizer/blend/depth-stencil states, constant buffers, 2D textures, offscreen RTVs/DSVs, and staging texture readback.
   - **DirectX 12 (`dx12duct`)**: Hardware `D3D12CreateDevice` (Feature Level 12_1) and `ID3D12CommandQueue` paired with DXGI swapchain presentation, runtime HLSL compilation, offscreen render targets, and hardware draw execution.
 - **Live Runtime Backend Switching**: Switch between OpenGL, Vulkan, DirectX 11, and DirectX 12 on the fly on the same window (`duct.switch_backend(...)`) without restarting the application.
-- **Built-In Base Shape Helpers**: Immediate and buffered helpers for triangles (`draw_triangle`), rectangles (`draw_rect`), circles (`draw_circle`), and indexed quads (`create_rect_buffers`).
+- **Built-In Base Shape Helpers**: Immediate and buffered helpers for triangles (`draw_triangle`), rectangles (`draw_rect`), circles (`draw_circle`), thick lines (`draw_line`), rectangle borders (`draw_rect_outline`), and circle rings (`draw_circle_outline`).
+- **Flexible Backend Deployment**:
+  - **Dynamic Plugins**: Separate backend `.dll` / `.so` libraries in `./renderer/` for hot-swappable modular engines.
+  - **Direct Bundled Crates**: Statically link backends into your binary via features (`features = ["gl", "vk", "dx11", "dx12"]` or `features = ["bundled-all"]`) for zero-configuration crates.io consumption.
 - **Live Shader Hot-Reloading**: Recompile and relink vertex, fragment, or compute shaders in-place at runtime (`duct.reload_shader(...)`) while preserving resource handles.
 - **Real-Time GPU Telemetry**: Frame-by-frame FPS, frame time (ms), draw call count, triangle count, pipeline state switches, and tracked GPU memory allocations (`duct.frame_stats()`).
 - **Low-Level Escape Hatches**: Query native GPU handles (`HGLRC`/`HDC`, `VkDevice`/`VkInstance`, `ID3D11Device`/`ID3D11DeviceContext`, `ID3D12Device`/`ID3D12CommandQueue`) via `duct.raw_context()`.

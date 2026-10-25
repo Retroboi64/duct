@@ -257,6 +257,15 @@ def _setup_signatures(lib):
     lib.duct_draw_circle.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_uint32, DuctColor]
     lib.duct_draw_circle.restype = ctypes.c_int32
 
+    lib.duct_draw_line.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, DuctColor]
+    lib.duct_draw_line.restype = ctypes.c_int32
+
+    lib.duct_draw_rect_outline.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, DuctColor]
+    lib.duct_draw_rect_outline.restype = ctypes.c_int32
+
+    lib.duct_draw_circle_outline.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_uint32, DuctColor]
+    lib.duct_draw_circle_outline.restype = ctypes.c_int32
+
     lib.duct_get_frame_stats.argtypes = [ctypes.c_void_p, ctypes.POINTER(DuctFrameStats)]
     lib.duct_get_frame_stats.restype = ctypes.c_int32
 
@@ -446,6 +455,15 @@ class Duct:
 
     def draw_circle(self, center_x, center_y, radius, segments=32, r=0.3, g=0.6, b=1.0, a=1.0):
         self._lib.duct_draw_circle(self._handle, center_x, center_y, radius, segments, DuctColor(r, g, b, a))
+
+    def draw_line(self, x0, y0, x1, y1, thickness=0.01, r=1.0, g=1.0, b=1.0, a=1.0):
+        self._lib.duct_draw_line(self._handle, x0, y0, x1, y1, thickness, DuctColor(r, g, b, a))
+
+    def draw_rect_outline(self, x, y, width, height, thickness=0.01, r=1.0, g=1.0, b=1.0, a=1.0):
+        self._lib.duct_draw_rect_outline(self._handle, x, y, width, height, thickness, DuctColor(r, g, b, a))
+
+    def draw_circle_outline(self, center_x, center_y, radius, thickness=0.01, segments=32, r=1.0, g=1.0, b=1.0, a=1.0):
+        self._lib.duct_draw_circle_outline(self._handle, center_x, center_y, radius, thickness, segments, DuctColor(r, g, b, a))
 
     def get_frame_stats(self):
         stats = DuctFrameStats()

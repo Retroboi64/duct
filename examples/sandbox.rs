@@ -308,13 +308,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return ControlFlow::Exit;
                 }
 
-                // 2. Draw base shapes (Rectangle, Circle, Triangle, and Indexed Quad)
+                // 2. Draw base shapes (Rectangle, Circle, Triangle, Outlines, Lines, and Indexed Quad)
                 let _ = duct.draw_rect(
                     -0.88,
                     0.48,
                     0.34,
                     0.34,
                     DuctColor::rgba(0.2, 0.85, 0.45, 1.0),
+                );
+                let _ = duct.draw_rect_outline(
+                    -0.90,
+                    0.46,
+                    0.38,
+                    0.38,
+                    0.012,
+                    DuctColor::WHITE,
                 );
                 let _ = duct.draw_circle(
                     0.72,
@@ -323,11 +331,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     36,
                     DuctColor::rgba(0.2, 0.7, 0.95, 1.0),
                 );
+                let _ = duct.draw_circle_outline(
+                    0.72,
+                    0.65,
+                    0.22,
+                    0.012,
+                    36,
+                    DuctColor::YELLOW,
+                );
                 let _ = duct.draw_triangle(
                     [-0.72, -0.48, 0.0],
                     [-0.90, -0.84, 0.0],
                     [-0.54, -0.84, 0.0],
                     DuctColor::rgba(0.95, 0.3, 0.65, 1.0),
+                );
+                let _ = duct.draw_line(
+                    [-0.95, 0.0],
+                    [0.95, 0.0],
+                    0.006,
+                    DuctColor::rgba(0.4, 0.4, 0.5, 0.8),
                 );
 
                 // Indexed quad in bottom-right corner

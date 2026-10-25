@@ -2070,4 +2070,4 @@ impl RenderPipeline for GlPipeline {
     }
 }
 
-export_pipeline!(GlPipeline);
+export_pipeline!(GlPipeline, glduct_create_pipeline);

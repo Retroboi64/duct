@@ -94,11 +94,14 @@ print("[Python Test] Testing Live Backend Switching to Vulkan...")
 duct.switch_backend(3) # Vulkan
 print(f"[Python Test] Switched Backend: {duct.backend_name}")
 
-# 12. Test Base Shape Drawing on Vulkan
+# 12. Test Base Shape Drawing on Vulkan (including lines and outlines)
 duct.begin_frame(0.1, 0.1, 0.2, 1.0)
 duct.draw_triangle(0.0, 0.5, -0.5, -0.5, 0.5, -0.5, 1.0, 0.5, 0.2, 1.0)
 duct.draw_rect(-0.8, 0.4, 0.3, 0.3, 0.2, 0.85, 0.4, 1.0)
+duct.draw_rect_outline(-0.82, 0.38, 0.34, 0.34, 0.01, 1.0, 1.0, 1.0, 1.0)
 duct.draw_circle(0.6, 0.5, 0.2, 32, 0.2, 0.7, 1.0, 1.0)
+duct.draw_circle_outline(0.6, 0.5, 0.24, 0.01, 32, 1.0, 0.9, 0.2, 1.0)
+duct.draw_line(-0.9, 0.0, 0.9, 0.0, 0.008, 0.5, 0.5, 0.6, 0.9)
 duct.end_frame()
 duct.present()
 

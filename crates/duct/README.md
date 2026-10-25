@@ -7,9 +7,9 @@ Duct provides a high-level, type-safe API for hardware-accelerated rendering acr
 ## Highlights
 - **Zero External Dependencies**: Implemented purely using the Rust standard library and raw OS bindings (with optional `windowed` windowing support).
 - **Window Attachment Requirement**: Enforces native window attachment before pipeline initialization.
-- **Dynamic Plugin & Modular Architecture**: Supports both runtime-loaded dynamic backend plugins (`duct.gl`, `duct.vk`, `duct.dx11`, `duct.dx12`) and static backend linking.
+- **Dynamic Plugin & Modular Architecture**: Supports both runtime-loaded dynamic backend plugins (`duct.gl`, `duct.vk`, `duct.dx11`, `duct.dx12`) and direct in-binary static backend compilation (`features = ["gl", "vk", "dx11", "dx12", "bundled-all"]`).
 - **Live Runtime Backend Switching**: Seamlessly transition between graphics backends on the same window without restarting.
-- **Base Shape Helpers**: Built-in immediate and buffered shape rendering (`draw_triangle`, `draw_rect`, `draw_circle`, `create_rect_buffers`).
+- **Base Shape Helpers**: Built-in immediate and buffered shape rendering (`draw_triangle`, `draw_rect`, `draw_circle`, `draw_line`, `draw_rect_outline`, `draw_circle_outline`, `create_rect_buffers`, `create_line_buffer`).
 - **Live Shader Hot-Reloading**: In-place recompilation of shaders at runtime.
 - **GPU Telemetry**: Real-time FPS, frame timing, draw calls, triangle counts, and memory statistics.
 - **C-ABI & Multi-Language FFI**: Direct C headers, Python `ctypes`, and C# bindings.

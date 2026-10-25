@@ -2693,4 +2693,4 @@ impl RenderPipeline for Dx11Pipeline {
     }
 }
 
-export_pipeline!(Dx11Pipeline);
+export_pipeline!(Dx11Pipeline, dx11duct_create_pipeline);

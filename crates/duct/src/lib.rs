@@ -1539,6 +1539,117 @@ impl Duct {
         self.draw_shape_vertices(&verts, color)
     }
 
+    /// Immediately draws a thick line segment between two 2D points in NDC `[-1.0, 1.0]`.
+    pub fn draw_line(
+        &mut self,
+        p0: [f32; 2],
+        p1: [f32; 2],
+        thickness: f32,
+        color: DuctColor,
+    ) -> Result<(), DuctError> {
+        let dx = p1[0] - p0[0];
+        let dy = p1[1] - p0[1];
+        let len = (dx * dx + dy * dy).sqrt();
+        if len <= 1e-6 {
+            return Ok(());
+        }
+        let half_thick = thickness * 0.5;
+        let nx = (-dy / len) * half_thick;
+        let ny = (dx / len) * half_thick;
+
+        let v0 = [p0[0] + nx, p0[1] + ny, 0.0];
+        let v1 = [p0[0] - nx, p0[1] - ny, 0.0];
+        let v2 = [p1[0] - nx, p1[1] - ny, 0.0];
+        let v3 = [p1[0] + nx, p1[1] + ny, 0.0];
+
+        let verts = [
+            // Triangle 1
+            v0[0], v0[1], v0[2],
+            v1[0], v1[1], v1[2],
+            v2[0], v2[1], v2[2],
+            // Triangle 2
+            v0[0], v0[1], v0[2],
+            v2[0], v2[1], v2[2],
+            v3[0], v3[1], v3[2],
+        ];
+        self.draw_shape_vertices(&verts, color)
+    }
+
+    /// Immediately draws an outlined rectangle border with specified line thickness in NDC.
+    pub fn draw_rect_outline(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        line_thickness: f32,
+        color: DuctColor,
+    ) -> Result<(), DuctError> {
+        let t = line_thickness.min(width * 0.5).min(height * 0.5);
+        if t <= 0.0 {
+            return Ok(());
+        }
+        // Bottom
+        self.draw_rect(x, y, width, t, color)?;
+        // Top
+        self.draw_rect(x, y + height - t, width, t, color)?;
+        // Left
+        self.draw_rect(x, y + t, t, height - 2.0 * t, color)?;
+        // Right
+        self.draw_rect(x + width - t, y + t, t, height - 2.0 * t, color)?;
+        Ok(())
+    }
+
+    /// Immediately draws an outlined circle ring with specified line thickness in NDC.
+    pub fn draw_circle_outline(
+        &mut self,
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+        line_thickness: f32,
+        segments: u32,
+        color: DuctColor,
+    ) -> Result<(), DuctError> {
+        let segs = segments.clamp(3, 256);
+        let half_t = line_thickness * 0.5;
+        let r_inner = (radius - half_t).max(0.0);
+        let r_outer = radius + half_t;
+        let step = std::f32::consts::TAU / (segs as f32);
+
+        let mut verts = Vec::with_capacity((segs as usize) * 18);
+        for i in 0..segs {
+            let a0 = (i as f32) * step;
+            let a1 = ((i + 1) as f32) * step;
+
+            let in0 = [center_x + r_inner * a0.cos(), center_y + r_inner * a0.sin(), 0.0];
+            let out0 = [center_x + r_outer * a0.cos(), center_y + r_outer * a0.sin(), 0.0];
+            let in1 = [center_x + r_inner * a1.cos(), center_y + r_inner * a1.sin(), 0.0];
+            let out1 = [center_x + r_outer * a1.cos(), center_y + r_outer * a1.sin(), 0.0];
+
+            // Triangle 1
+            verts.extend_from_slice(&[out0[0], out0[1], out0[2], in0[0], in0[1], in0[2], in1[0], in1[1], in1[2]]);
+            // Triangle 2
+            verts.extend_from_slice(&[out0[0], out0[1], out0[2], in1[0], in1[1], in1[2], out1[0], out1[1], out1[2]]);
+        }
+        self.draw_shape_vertices(&verts, color)
+    }
+
+    /// Allocates a static GPU vertex buffer for a line (`2` vertices, `Float3`).
+    pub fn create_line_buffer(
+        &mut self,
+        p0: [f32; 3],
+        p1: [f32; 3],
+    ) -> Result<DuctBufferHandle, DuctError> {
+        let verts: [f32; 6] = [
+            p0[0], p0[1], p0[2],
+            p1[0], p1[1], p1[2],
+        ];
+        let bytes = unsafe {
+            std::slice::from_raw_parts(verts.as_ptr() as *const u8, std::mem::size_of_val(&verts))
+        };
+        self.create_buffer(DuctBufferType::Vertex, bytes.len(), Some(bytes), false)
+    }
+
     /// Allocates a static GPU vertex buffer containing a single triangle (`3` vertices, `Float3`).
     pub fn create_triangle_buffer(
         &mut self,
@@ -1782,8 +1893,18 @@ fn determine_load_candidates(
     }
 }
 
-fn create_static_pipeline(_pref: BackendPreference) -> Option<*mut DuctPipelineVTable> {
-    None
+fn create_static_pipeline(pref: BackendPreference) -> Option<*mut DuctPipelineVTable> {
+    match pref {
+        #[cfg(feature = "gl")]
+        BackendPreference::OpenGL => Some(glduct::create_pipeline_vtable()),
+        #[cfg(feature = "vk")]
+        BackendPreference::Vulkan => Some(vkduct::create_pipeline_vtable()),
+        #[cfg(feature = "dx11")]
+        BackendPreference::DirectX11 => Some(dx11duct::create_pipeline_vtable()),
+        #[cfg(feature = "dx12")]
+        BackendPreference::DirectX12 => Some(dx12duct::create_pipeline_vtable()),
+        _ => None,
+    }
 }
 
 fn load_pipeline_from_vtable(
@@ -2634,6 +2755,63 @@ pub extern "C" fn duct_draw_circle(
     if handle.is_null() { return DuctResult::ErrorInvalidParameter; }
     let duct = unsafe { &mut *handle };
     match duct.draw_circle(center_x, center_y, radius, segments, color) {
+        Ok(()) => DuctResult::Success,
+        Err(DuctError::PipelineOperationFailed(r)) => r,
+        Err(_) => DuctResult::ErrorGeneric,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn duct_draw_line(
+    handle: *mut Duct,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    thickness: f32,
+    color: DuctColor,
+) -> DuctResult {
+    if handle.is_null() { return DuctResult::ErrorInvalidParameter; }
+    let duct = unsafe { &mut *handle };
+    match duct.draw_line([x0, y0], [x1, y1], thickness, color) {
+        Ok(()) => DuctResult::Success,
+        Err(DuctError::PipelineOperationFailed(r)) => r,
+        Err(_) => DuctResult::ErrorGeneric,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn duct_draw_rect_outline(
+    handle: *mut Duct,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    line_thickness: f32,
+    color: DuctColor,
+) -> DuctResult {
+    if handle.is_null() { return DuctResult::ErrorInvalidParameter; }
+    let duct = unsafe { &mut *handle };
+    match duct.draw_rect_outline(x, y, width, height, line_thickness, color) {
+        Ok(()) => DuctResult::Success,
+        Err(DuctError::PipelineOperationFailed(r)) => r,
+        Err(_) => DuctResult::ErrorGeneric,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn duct_draw_circle_outline(
+    handle: *mut Duct,
+    center_x: f32,
+    center_y: f32,
+    radius: f32,
+    line_thickness: f32,
+    segments: u32,
+    color: DuctColor,
+) -> DuctResult {
+    if handle.is_null() { return DuctResult::ErrorInvalidParameter; }
+    let duct = unsafe { &mut *handle };
+    match duct.draw_circle_outline(center_x, center_y, radius, line_thickness, segments, color) {
         Ok(()) => DuctResult::Success,
         Err(DuctError::PipelineOperationFailed(r)) => r,
         Err(_) => DuctResult::ErrorGeneric,

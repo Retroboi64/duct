@@ -3742,4 +3742,4 @@ impl RenderPipeline for VkPipeline {
     }
 }
 
-export_pipeline!(VkPipeline);
+export_pipeline!(VkPipeline, vkduct_create_pipeline);

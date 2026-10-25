@@ -280,6 +280,15 @@ namespace Project32.Duct
         public static extern DuctResult duct_draw_circle(IntPtr handle, float centerX, float centerY, float radius, uint segments, DuctColor color);
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern DuctResult duct_draw_line(IntPtr handle, float x0, float y0, float x1, float y1, float thickness, DuctColor color);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern DuctResult duct_draw_rect_outline(IntPtr handle, float x, float y, float width, float height, float lineThickness, DuctColor color);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern DuctResult duct_draw_circle_outline(IntPtr handle, float centerX, float centerY, float radius, float lineThickness, uint segments, DuctColor color);
+
+        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         public static extern DuctResult duct_get_frame_stats(IntPtr handle, out DuctFrameStats outStats);
 
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
