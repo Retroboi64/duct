@@ -25,6 +25,85 @@
 
 ---
 
+## Backend Implementation Status & Feature Matrix
+
+Duct provides a unified, cross-platform graphics API across four major hardware backends. Below is a comprehensive breakdown of what is fully implemented and tested across all backends versus features that are partial or currently in development:
+
+### Feature Matrix
+
+| Feature | OpenGL (`glduct`) | DirectX 11 (`dx11duct`) | DirectX 12 (`dx12duct`) | Vulkan (`vkduct`) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Window Surface & Swapchain Presentation** | ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **Live Backend Hot-Switching (same window)**| ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **2D Base Shapes (Tri, Rect, Circle, Line)**| ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **Custom Vertex & Index Buffers (U16/U32)** | ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **Dynamic Vertex Layouts (up to 8 attrs)**  | ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **Hardware Depth Testing & Depth Write**   | ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **Uniform Parameter Streaming (MVP/Params)**| ✅ Supported | ✅ Supported | ✅ Supported | ✅ Push Constants |
+| **Offscreen Render Targets (FBO/RTV)**      | ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **Offscreen Depth Buffer Attachments**      | ✅ Supported | ✅ Supported | ✅ Supported | ✅ `D32_SFLOAT` |
+| **Render Target Blit (to swapchain/window)**| ✅ Supported | ✅ Supported | ✅ Supported | ✅ `vkCmdBlitImage` |
+| **GPU Pixel Readback (Staging Buffer)**     | ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **2D Textures & Samplers**                  | ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+| **Instanced Rendering**                     | ✅ Supported | ✅ Supported | ✅ Supported | 🟡 Basic |
+| **Compute Shader Dispatch**                 | ✅ Supported (4.3+) | ✅ Supported (`cs_5_0`) | ✅ Supported | 🟡 Basic |
+| **Shader Hot-Reloading**                    | ✅ Native GLSL | ✅ Runtime HLSL | ✅ Runtime HLSL | 🟡 SPIR-V Assembler |
+| **Runtime GPU Telemetry & Profiling**       | ✅ Supported | ✅ Supported | ✅ Supported | ✅ Supported |
+
+---
+
+### What Is Working (Production Ready)
+
+Across all four backends (**OpenGL**, **DirectX 11**, **DirectX 12**, and **Vulkan**):
+- **Native Window Binding**: Full zero-dependency integration with native OS window handles (`HWND` on Windows, X11 `Window`/`Display*` on Linux).
+- **2D Shape Rendering**: Immediate drawing of triangles, rectangles, filled circles, circle outlines, lines, and borders with custom colors and viewport coordinate transforms.
+- **3D Perspective Pipelines**: Full 3D rendering with custom vertex formats (position, normal, UV, color), index buffers (`U16`/`U32`), transformation matrices (Model-View-Projection), and hardware depth testing.
+- **Hardware Depth Buffers**: Depth testing (`Less`, `LessEqual`, `Greater`, etc.) and depth write masks on both window swapchains and offscreen render targets.
+- **Offscreen Render Targets & FBOs**: Creation and binding of custom-resolution render targets with color and depth attachments. Clean mid-frame render pass switching.
+- **Render Target Blitting**: Hardware-accelerated blitting from offscreen targets to the window swapchain with selectable filtering (nearest-neighbor for retro pixelated/PSX styles or bilinear for smooth scaling).
+- **Uniform Streaming**: Fast per-draw updates for 4x4 transform matrices, float arrays, vector parameters, time, and resolution uniforms without stalling the pipeline.
+- **GPU Pixel Readback**: Synchronous readback of rendered pixels (RGBA8) from render targets to CPU memory for screenshots, vision, or tests.
+- **Live Backend Hot-Switching**: Hot-swap between any backend on the fly on an active window without losing window state or reallocating OS window handles.
+- **Multi-Language Interop**: Ready-to-go C header (`duct.h`), Python wrapper (`duct.py`), and C# P/Invoke bindings (`Duct.cs`).
+
+---
+
+### What Isn't Working Yet & Known Limitations
+
+#### 🌋 Vulkan Subsystem (`vkduct`)
+- **Arbitrary Runtime GLSL Source Compilation**:
+  - *What works*: Duct includes a built-in runtime SPIR-V 1.0 assembler that builds graphics and compute pipelines directly without external dependencies.
+  - *Limitation*: Vulkan drivers require binary SPIR-V bytecode. Directly passing raw GLSL source strings at runtime without precompilation requires external tools (like `glslc` or `shaderc`). In contrast, OpenGL and DirectX compile textual shader source natively in driver runtime.
+- **Descriptor Set Multi-Texture Arrays**:
+  - *What works*: Standard 2D texture binding, sampling, and push constant uniform streaming (112 bytes for transforms, lighting, colors, and parameters).
+  - *Limitation*: Dynamic descriptor set pools with arbitrary bindless texture arrays or dynamic uniform buffer offsets are not yet fully exposed.
+- **Compute SSBO Binding**:
+  - Compute pipeline creation and dispatch are operational, but binding large structured shader storage buffers (SSBOs) is currently rudimentary.
+
+#### 🪟 DirectX 12 (`dx12duct`)
+- **Single Command Queue Recording**:
+  - *What works*: Full D3D12 device, DXGI swapchain, root signatures, PSOs with depth-stencil, dynamic constant buffers, and execution.
+  - *Limitation*: All command recording currently occurs sequentially on a single immediate command queue. Multi-threaded worker thread command recording will be introduced in an upcoming release.
+- **Cross-Adapter Multi-GPU**: Linked-node multi-adapter execution is not exposed.
+
+#### 🪟 DirectX 11 (`dx11duct`)
+- **Platform Scope**:
+  - DirectX 11 is rock-solid and feature-complete, but inherently limited to Windows environments (or Wine/Proton on Linux).
+
+#### 🐧/🍏 OpenGL (`glduct`)
+- **Apple macOS Support**:
+  - Apple deprecated OpenGL at version 4.1 Core; compute shaders (GL 4.3+) and direct state access (DSA) are not available on macOS when using the native OpenGL driver.
+- **Multi-Threading**:
+  - OpenGL contexts are bound to a single OS thread at a time by design.
+
+#### 🗺️ Roadmap & In-Progress Features
+- **Native Metal Backend (`metalduct`)**: Planned native Apple Metal backend for macOS and iOS to replace legacy OpenGL 4.1.
+- **Pure Wayland Surface Support**: Direct Wayland EGL / Vulkan surface presentation without requiring XWayland.
+- **Built-in Font & Text Rasterizer**: High-performance SDF font atlas rendering subsystem.
+- **Audio Subsystem**: Planned companion audio subsystem (`duct-audio`) for Project32.
+
+---
+
 ## Architecture & Workspace Layout
 
 ```text
