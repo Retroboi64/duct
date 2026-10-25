@@ -1,11 +1,19 @@
 [package]
 name = "dx12duct"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "DirectX 12 graphics pipeline module for duct"
+readme = "README.md"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-duct-core = { path = "../duct-core" }
+duct-core = { path = "../duct-core", version = "0.1.0" }

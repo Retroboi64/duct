@@ -1,14 +1,22 @@
 [package]
 name = "duct"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Central router and dynamic pipeline loader for Project32 duct graphics subsystem"
+readme = "README.md"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-duct-core = { path = "../duct-core" }
+duct-core = { path = "../duct-core", version = "0.1.0" }
 windowed = { path = "../../../windowed", version = "0.4.0", optional = true }
 
 [features]

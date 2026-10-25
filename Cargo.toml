@@ -10,15 +10,41 @@ members = [
 ]
 resolver = "2"
 
-[package]
-name = "duct-workspace"
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+authors = ["Retroboi64"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Retroboi64/duct"
+homepage = "https://github.com/Retroboi64/duct"
+documentation = "https://docs.rs/duct"
+keywords = ["graphics", "rendering", "vulkan", "opengl", "directx"]
+categories = ["rendering::engine", "graphics", "game-development"]
+
+[workspace.dependencies]
+duct-core = { path = "crates/duct-core", version = "0.1.0" }
+duct = { path = "crates/duct", version = "0.1.0" }
+glduct = { path = "crates/glduct", version = "0.1.0" }
+vkduct = { path = "crates/vkduct", version = "0.1.0" }
+dx11duct = { path = "crates/dx11duct", version = "0.1.0" }
+dx12duct = { path = "crates/dx12duct", version = "0.1.0" }
+windowed = { path = "../windowed", version = "0.4.0" }
+
+[package]
+name = "duct-workspace"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Project32 Duct Workspace Root"
+publish = false
 
 [dependencies]
-duct = { path = "crates/duct" }
-duct-core = { path = "crates/duct-core" }
-windowed = { path = "../windowed" }
+duct = { workspace = true }
+duct-core = { workspace = true }
+windowed = { workspace = true }
 
 [[bin]]
 name = "build_dist"

@@ -1,7 +1,11 @@
 [package]
 name = "xtask"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Build orchestration task for Project32 duct graphics subsystem"
+publish = false
 
 [dependencies]

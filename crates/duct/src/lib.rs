@@ -401,61 +401,90 @@ impl DuctBuilder {
             return Err(DuctError::WindowRequired);
         }
 
-        let renderer_dir = resolve_renderer_dir(self.renderer_dir.as_deref())?;
-        println!("[duct] Renderer directory resolved to: {}", renderer_dir.display());
+        let renderer_dir_opt = resolve_renderer_dir(self.renderer_dir.as_deref()).ok();
+        let renderer_dir = renderer_dir_opt
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("./renderer"));
 
         let candidates = determine_load_candidates(self.preferred_backend);
-
         let mut last_error: Option<DuctError> = None;
 
-        for (preference, filenames) in &candidates {
-            let mut resolved_path = None;
-            for filename in *filenames {
-                let p = renderer_dir.join(filename);
-                if p.is_file() {
-                    resolved_path = Some(p);
-                    break;
+        // 1. Try dynamic loading if renderer_dir exists
+        if renderer_dir_opt.is_some() {
+            println!("[duct] Renderer directory resolved to: {}", renderer_dir.display());
+            for (preference, filenames) in &candidates {
+                let mut resolved_path = None;
+                for filename in *filenames {
+                    let p = renderer_dir.join(filename);
+                    if p.is_file() {
+                        resolved_path = Some(p);
+                        break;
+                    }
+                }
+
+                let dll_path = match resolved_path {
+                    Some(p) => p,
+                    None => {
+                        if self.preferred_backend != BackendPreference::Auto
+                            && *preference == self.preferred_backend
+                        {
+                            eprintln!(
+                                "[duct][WARN] Backend '{}' requested via CLI was not found in '{}'. Falling back to next available backend...",
+                                preference,
+                                renderer_dir.display()
+                            );
+                        }
+                        continue;
+                    }
+                };
+
+                println!(
+                    "[duct] Attempting to load pipeline module from: {}",
+                    dll_path.display()
+                );
+
+                match load_pipeline_from_dll(&dll_path, &self, &renderer_dir) {
+                    Ok(duct) => {
+                        println!(
+                            "[duct] Pipeline '{}' v{} loaded successfully!",
+                            duct.backend_name(),
+                            duct.backend_version()
+                        );
+                        return Ok(duct);
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "[duct][WARN] Failed to initialize backend '{}' from {}: {}. Attempting fallback...",
+                            preference,
+                            dll_path.display(),
+                            err
+                        );
+                        last_error = Some(err);
+                    }
                 }
             }
+        }
 
-            let dll_path = match resolved_path {
-                Some(p) => p,
-                None => {
-                    if self.preferred_backend != BackendPreference::Auto
-                        && *preference == self.preferred_backend
-                    {
-                        eprintln!(
-                            "[duct][WARN] Backend '{}' requested via CLI was not found in '{}'. Falling back to next available backend...",
-                            preference,
-                            renderer_dir.display()
+        // 2. Try statically compiled built-in backends if features are enabled
+        for (pref, _) in &candidates {
+            if let Some(vtable) = create_static_pipeline(*pref) {
+                println!("[duct] Initializing built-in backend: {}", pref);
+                match load_pipeline_from_vtable(vtable, None, &self, &renderer_dir) {
+                    Ok(duct) => {
+                        println!(
+                            "[duct] Pipeline '{}' v{} loaded successfully (built-in)!",
+                            duct.backend_name(),
+                            duct.backend_version()
                         );
+                        return Ok(duct);
                     }
-                    continue;
-                }
-            };
-
-            println!(
-                "[duct] Attempting to load pipeline module from: {}",
-                dll_path.display()
-            );
-
-            match load_pipeline_from_dll(&dll_path, &self, &renderer_dir) {
-                Ok(duct) => {
-                    println!(
-                        "[duct] Pipeline '{}' v{} loaded successfully!",
-                        duct.backend_name(),
-                        duct.backend_version()
-                    );
-                    return Ok(duct);
-                }
-                Err(err) => {
-                    eprintln!(
-                        "[duct][WARN] Failed to initialize backend '{}' from {}: {}. Attempting fallback...",
-                        preference,
-                        dll_path.display(),
-                        err
-                    );
-                    last_error = Some(err);
+                    Err(err) => {
+                        eprintln!(
+                            "[duct][WARN] Failed to initialize built-in backend '{}': {}. Attempting fallback...",
+                            pref, err
+                        );
+                        last_error = Some(err);
+                    }
                 }
             }
         }
@@ -533,7 +562,7 @@ impl GpuRenderTarget {
 /// Main controller struct wrapping dynamic pipeline state and routing calls.
 pub struct Duct {
     vtable: *mut DuctPipelineVTable,
-    _library: os_lib::OsLibrary,
+    _library: Option<os_lib::OsLibrary>,
     backend_type: DuctBackendType,
     backend_name: String,
     backend_version: String,
@@ -1220,17 +1249,40 @@ impl Duct {
             }
         }
 
-        let dll_path = match resolved {
-            Some(p) => p,
-            None => {
-                return Err(DuctError::BackendNotFound {
-                    requested: pref,
-                    search_path: self.renderer_dir.clone(),
-                });
-            }
-        };
+        if let Some(dll_path) = resolved {
+            self.shutdown_current_pipeline();
 
-        // Gracefully shutdown current backend
+            // Load new dynamic library
+            let lib = os_lib::OsLibrary::load(&dll_path).map_err(|e| DuctError::LibraryLoadError {
+                path: dll_path.clone(),
+                source: e,
+            })?;
+
+            let create_pipeline: DuctCreatePipelineFn = unsafe {
+                lib.get_symbol(b"duct_create_pipeline\0")
+                    .map_err(|e| DuctError::SymbolResolutionError {
+                        symbol: "duct_create_pipeline".to_string(),
+                        source: e,
+                    })?
+            };
+
+            let vtable = unsafe { create_pipeline() };
+            return self.activate_new_pipeline(vtable, Some(lib));
+        }
+
+        // Try static built-in pipeline
+        if let Some(vtable) = create_static_pipeline(pref) {
+            self.shutdown_current_pipeline();
+            return self.activate_new_pipeline(vtable, None);
+        }
+
+        Err(DuctError::BackendNotFound {
+            requested: pref,
+            search_path: self.renderer_dir.clone(),
+        })
+    }
+
+    fn shutdown_current_pipeline(&mut self) {
         self.shape_vbo = DuctBufferHandle::INVALID;
         self.shape_vertex_cursor = 0;
         self.last_bound_user_vbo = DuctBufferHandle::INVALID;
@@ -1242,22 +1294,14 @@ impl Duct {
             }
             self.vtable = std::ptr::null_mut();
         }
+        self._library = None;
+    }
 
-        // Load new dynamic library
-        let lib = os_lib::OsLibrary::load(&dll_path).map_err(|e| DuctError::LibraryLoadError {
-            path: dll_path.clone(),
-            source: e,
-        })?;
-
-        let create_pipeline: DuctCreatePipelineFn = unsafe {
-            lib.get_symbol(b"duct_create_pipeline\0")
-                .map_err(|e| DuctError::SymbolResolutionError {
-                    symbol: "duct_create_pipeline".to_string(),
-                    source: e,
-                })?
-        };
-
-        let vtable = unsafe { create_pipeline() };
+    fn activate_new_pipeline(
+        &mut self,
+        vtable: *mut DuctPipelineVTable,
+        lib: Option<os_lib::OsLibrary>,
+    ) -> Result<(), DuctError> {
         if vtable.is_null() {
             return Err(DuctError::NullVTableReturned);
         }
@@ -1738,21 +1782,16 @@ fn determine_load_candidates(
     }
 }
 
-fn load_pipeline_from_dll(path: &Path, builder: &DuctBuilder, renderer_dir: &Path) -> Result<Duct, DuctError> {
-    let lib = os_lib::OsLibrary::load(path).map_err(|e| DuctError::LibraryLoadError {
-        path: path.to_path_buf(),
-        source: e,
-    })?;
+fn create_static_pipeline(_pref: BackendPreference) -> Option<*mut DuctPipelineVTable> {
+    None
+}
 
-    let create_pipeline: DuctCreatePipelineFn = unsafe {
-        lib.get_symbol(b"duct_create_pipeline\0")
-            .map_err(|e| DuctError::SymbolResolutionError {
-                symbol: "duct_create_pipeline".to_string(),
-                source: e,
-            })?
-    };
-
-    let vtable = unsafe { create_pipeline() };
+fn load_pipeline_from_vtable(
+    vtable: *mut DuctPipelineVTable,
+    lib: Option<os_lib::OsLibrary>,
+    builder: &DuctBuilder,
+    renderer_dir: &Path,
+) -> Result<Duct, DuctError> {
     if vtable.is_null() {
         return Err(DuctError::NullVTableReturned);
     }
@@ -1813,6 +1852,24 @@ fn load_pipeline_from_dll(path: &Path, builder: &DuctBuilder, renderer_dir: &Pat
         shape_vertex_cursor: 0,
         last_bound_user_vbo: DuctBufferHandle::INVALID,
     })
+}
+
+fn load_pipeline_from_dll(path: &Path, builder: &DuctBuilder, renderer_dir: &Path) -> Result<Duct, DuctError> {
+    let lib = os_lib::OsLibrary::load(path).map_err(|e| DuctError::LibraryLoadError {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+
+    let create_pipeline: DuctCreatePipelineFn = unsafe {
+        lib.get_symbol(b"duct_create_pipeline\0")
+            .map_err(|e| DuctError::SymbolResolutionError {
+                symbol: "duct_create_pipeline".to_string(),
+                source: e,
+            })?
+    };
+
+    let vtable = unsafe { create_pipeline() };
+    load_pipeline_from_vtable(vtable, Some(lib), builder, renderer_dir)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,7 +1,15 @@
 [package]
 name = "duct-core"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Core C-ABI vtable interface and common types for Project32 duct graphics pipeline"
+readme = "README.md"
 
 [dependencies]
