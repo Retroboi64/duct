@@ -35,6 +35,7 @@ struct VkPushConstantBlock {
     color: [f32; 4],      // offset 0:  uColor (default [1.0, 1.0, 1.0, 1.0])
     params: [f32; 4],     // offset 16: uParams ([off_x, off_y, scale_x, scale_y])
     transform: [f32; 16], // offset 32: uTransform (4x4 column-major matrix)
+    extra: [f32; 4],      // offset 96: uExtra ([time, res_x, res_y, mode])
 }
 
 impl Default for VkPushConstantBlock {
@@ -48,6 +49,7 @@ impl Default for VkPushConstantBlock {
                 0.0, 0.0, 1.0, 0.0, // col 2
                 0.0, 0.0, 0.0, 1.0, // col 3
             ],
+            extra: [0.0, 1280.0, 720.0, 1.0],
         }
     }
 }
@@ -84,7 +86,11 @@ struct VkRenderTargetRecord {
     width: u32,
     height: u32,
     color_tex: DuctTextureHandle,
+    depth_image: VkImage,
+    depth_memory: VkDeviceMemory,
+    depth_view: VkImageView,
     framebuffer: VkFramebuffer,
+    has_depth: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -93,14 +99,15 @@ struct VkPipelineKey {
     fs: u64,
     cull_mode: u32,
     blend_mode: u32,
+    depth_test: bool,
+    depth_write: bool,
+    depth_compare: u32,
     wireframe: bool,
     is_offscreen: bool,
     stride: u32,
     attr_count: u32,
-    attr0_fmt: u32,
-    attr0_off: u32,
-    attr1_fmt: u32,
-    attr1_off: u32,
+    attr_formats: [u32; 8],
+    attr_offsets: [u32; 8],
 }
 
 pub struct VkPipeline {
@@ -129,6 +136,10 @@ pub struct VkPipeline {
     swapchain_image_views: Vec<VkImageView>,
     render_pass: VkRenderPass,
     offscreen_render_pass: VkRenderPass,
+    offscreen_render_pass_with_depth: VkRenderPass,
+    depth_image: VkImage,
+    depth_image_memory: VkDeviceMemory,
+    depth_image_view: VkImageView,
     framebuffers: Vec<VkFramebuffer>,
     current_image_index: u32,
     swapchain_active: bool,
@@ -209,6 +220,10 @@ impl Default for VkPipeline {
             swapchain_image_views: Vec::new(),
             render_pass: VK_NULL_HANDLE,
             offscreen_render_pass: VK_NULL_HANDLE,
+            offscreen_render_pass_with_depth: VK_NULL_HANDLE,
+            depth_image: VK_NULL_HANDLE,
+            depth_image_memory: VK_NULL_HANDLE,
+            depth_image_view: VK_NULL_HANDLE,
             framebuffers: Vec::new(),
             current_image_index: 0,
             swapchain_active: false,
@@ -331,7 +346,12 @@ impl VkPipeline {
         }
     }
 
-    unsafe fn create_single_render_pass(&self, format: u32, final_layout: u32) -> VkRenderPass {
+    unsafe fn create_single_render_pass(
+        &self,
+        format: u32,
+        final_layout: u32,
+        with_depth: bool,
+    ) -> VkRenderPass {
         let dfns = match &self.device_fns {
             Some(d) if !self.device.is_null() => d,
             _ => return VK_NULL_HANDLE,
@@ -354,6 +374,23 @@ impl VkPipeline {
             layout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         };
 
+        let depth_attachment = VkAttachmentDescription {
+            flags: 0,
+            format: VK_FORMAT_D32_SFLOAT,
+            samples: VK_SAMPLE_COUNT_1_BIT,
+            loadOp: VK_ATTACHMENT_LOAD_OP_CLEAR,
+            storeOp: VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            stencilLoadOp: VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            stencilStoreOp: VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            initialLayout: VK_IMAGE_LAYOUT_UNDEFINED,
+            finalLayout: VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        };
+
+        let depth_attachment_ref = VkAttachmentReference {
+            attachment: 1,
+            layout: VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        };
+
         let subpass = VkSubpassDescription {
             flags: 0,
             pipelineBindPoint: VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -362,7 +399,11 @@ impl VkPipeline {
             colorAttachmentCount: 1,
             pColorAttachments: &color_attachment_ref,
             pResolveAttachments: std::ptr::null(),
-            pDepthStencilAttachment: std::ptr::null(),
+            pDepthStencilAttachment: if with_depth {
+                &depth_attachment_ref
+            } else {
+                std::ptr::null()
+            },
             preserveAttachmentCount: 0,
             pPreserveAttachments: std::ptr::null(),
         };
@@ -370,19 +411,40 @@ impl VkPipeline {
         let dependency = VkSubpassDependency {
             srcSubpass: VK_SUBPASS_EXTERNAL,
             dstSubpass: 0,
-            srcStageMask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            dstStageMask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            srcStageMask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                | if with_depth {
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                } else {
+                    0
+                },
+            dstStageMask: VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                | if with_depth {
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                } else {
+                    0
+                },
             srcAccessMask: 0,
-            dstAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            dstAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                | if with_depth {
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                } else {
+                    0
+                },
             dependencyFlags: 0,
+        };
+
+        let attachments = if with_depth {
+            vec![color_attachment, depth_attachment]
+        } else {
+            vec![color_attachment]
         };
 
         let rp_info = VkRenderPassCreateInfo {
             sType: VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
             pNext: std::ptr::null(),
             flags: 0,
-            attachmentCount: 1,
-            pAttachments: &color_attachment,
+            attachmentCount: attachments.len() as u32,
+            pAttachments: attachments.as_ptr(),
             subpassCount: 1,
             pSubpasses: &subpass,
             dependencyCount: 1,
@@ -413,6 +475,18 @@ impl VkPipeline {
                         (dfns.DestroyRenderPass)(self.device, self.render_pass, std::ptr::null());
                     }
                     self.render_pass = VK_NULL_HANDLE;
+                }
+                if self.depth_image_view != VK_NULL_HANDLE {
+                    unsafe { (dfns.DestroyImageView)(self.device, self.depth_image_view, std::ptr::null()) };
+                    self.depth_image_view = VK_NULL_HANDLE;
+                }
+                if self.depth_image != VK_NULL_HANDLE {
+                    unsafe { (dfns.DestroyImage)(self.device, self.depth_image, std::ptr::null()) };
+                    self.depth_image = VK_NULL_HANDLE;
+                }
+                if self.depth_image_memory != VK_NULL_HANDLE {
+                    unsafe { (dfns.FreeMemory)(self.device, self.depth_image_memory, std::ptr::null()) };
+                    self.depth_image_memory = VK_NULL_HANDLE;
                 }
                 for view in self.swapchain_image_views.drain(..) {
                     if view != VK_NULL_HANDLE {
@@ -445,6 +519,7 @@ impl VkPipeline {
                     self.create_single_render_pass(
                         VK_FORMAT_B8G8R8A8_UNORM,
                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        true,
                     )
                 };
             }
@@ -604,12 +679,83 @@ impl VkPipeline {
         }
 
         let render_pass = unsafe {
-            self.create_single_render_pass(self.swapchain_format, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+            self.create_single_render_pass(self.swapchain_format, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, true)
         };
         if render_pass == VK_NULL_HANDLE {
             return false;
         }
         self.render_pass = render_pass;
+
+        // Allocate and create Depth Buffer for swapchain
+        let depth_format = VK_FORMAT_D32_SFLOAT;
+        let depth_info = VkImageCreateInfo {
+            sType: VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            pNext: std::ptr::null(),
+            flags: 0,
+            imageType: VK_IMAGE_TYPE_2D,
+            format: depth_format,
+            extent: VkExtent3D {
+                width: self.swapchain_extent.width,
+                height: self.swapchain_extent.height,
+                depth: 1,
+            },
+            mipLevels: 1,
+            arrayLayers: 1,
+            samples: VK_SAMPLE_COUNT_1_BIT,
+            tiling: VK_IMAGE_TILING_OPTIMAL,
+            usage: VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            sharingMode: VK_SHARING_MODE_EXCLUSIVE,
+            queueFamilyIndexCount: 0,
+            pQueueFamilyIndices: std::ptr::null(),
+            initialLayout: VK_IMAGE_LAYOUT_UNDEFINED,
+        };
+        let mut depth_img = VK_NULL_HANDLE;
+        if unsafe { (dfns.CreateImage)(self.device, &depth_info, std::ptr::null(), &mut depth_img) } == VK_SUCCESS {
+            let mut mem_reqs = VkMemoryRequirements::default();
+            unsafe { (dfns.GetImageMemoryRequirements)(self.device, depth_img, &mut mem_reqs) };
+            if let Some(mem_type) = self
+                .find_memory_type(mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+                .or_else(|| self.find_memory_type(mem_reqs.memoryTypeBits, 0))
+            {
+                let alloc_info = VkMemoryAllocateInfo {
+                    sType: VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                    pNext: std::ptr::null(),
+                    allocationSize: mem_reqs.size,
+                    memoryTypeIndex: mem_type,
+                };
+                let mut depth_mem = VK_NULL_HANDLE;
+                if unsafe { (dfns.AllocateMemory)(self.device, &alloc_info, std::ptr::null(), &mut depth_mem) } == VK_SUCCESS {
+                    unsafe { (dfns.BindImageMemory)(self.device, depth_img, depth_mem, 0) };
+                    let iv_info = VkImageViewCreateInfo {
+                        sType: VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                        pNext: std::ptr::null(),
+                        flags: 0,
+                        image: depth_img,
+                        viewType: VK_IMAGE_VIEW_TYPE_2D,
+                        format: depth_format,
+                        components: VkComponentMapping {
+                            r: VK_COMPONENT_SWIZZLE_IDENTITY,
+                            g: VK_COMPONENT_SWIZZLE_IDENTITY,
+                            b: VK_COMPONENT_SWIZZLE_IDENTITY,
+                            a: VK_COMPONENT_SWIZZLE_IDENTITY,
+                        },
+                        subresourceRange: VkImageSubresourceRange {
+                            aspectMask: VK_IMAGE_ASPECT_DEPTH_BIT,
+                            baseMipLevel: 0,
+                            levelCount: 1,
+                            baseArrayLayer: 0,
+                            layerCount: 1,
+                        },
+                    };
+                    let mut depth_view = VK_NULL_HANDLE;
+                    if unsafe { (dfns.CreateImageView)(self.device, &iv_info, std::ptr::null(), &mut depth_view) } == VK_SUCCESS {
+                        self.depth_image = depth_img;
+                        self.depth_image_memory = depth_mem;
+                        self.depth_image_view = depth_view;
+                    }
+                }
+            }
+        }
 
         for &img in &self.swapchain_images {
             let iv_info = VkImageViewCreateInfo {
@@ -642,13 +788,14 @@ impl VkPipeline {
             }
             self.swapchain_image_views.push(view);
 
+            let attachments = [view, self.depth_image_view];
             let fb_info = VkFramebufferCreateInfo {
                 sType: VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
                 pNext: std::ptr::null(),
                 flags: 0,
                 renderPass: self.render_pass,
-                attachmentCount: 1,
-                pAttachments: &view,
+                attachmentCount: if self.depth_image_view != VK_NULL_HANDLE { 2 } else { 1 },
+                pAttachments: attachments.as_ptr(),
                 width: self.swapchain_extent.width,
                 height: self.swapchain_extent.height,
                 layers: 1,
@@ -678,7 +825,11 @@ impl VkPipeline {
         };
 
         let target_rp = if is_offscreen {
-            self.offscreen_render_pass
+            if (pso.depth_test || pso.depth_write) && self.offscreen_render_pass_with_depth != VK_NULL_HANDLE {
+                self.offscreen_render_pass_with_depth
+            } else {
+                self.offscreen_render_pass
+            }
         } else {
             self.render_pass
         };
@@ -692,36 +843,28 @@ impl VkPipeline {
         } else {
             12
         };
-        let (a0_fmt, a0_off) = if attr_count >= 1 {
-            (
-                map_vertex_format(pso.vertex_layout.attributes[0].format),
-                pso.vertex_layout.attributes[0].offset,
-            )
-        } else {
-            (VK_FORMAT_R32G32B32_SFLOAT, 0)
-        };
-        let (a1_fmt, a1_off) = if attr_count >= 2 {
-            (
-                map_vertex_format(pso.vertex_layout.attributes[1].format),
-                pso.vertex_layout.attributes[1].offset,
-            )
-        } else {
-            (0, 0)
-        };
+
+        let mut attr_formats = [0u32; 8];
+        let mut attr_offsets = [0u32; 8];
+        for i in 0..(attr_count as usize).min(8) {
+            attr_formats[i] = map_vertex_format(pso.vertex_layout.attributes[i].format);
+            attr_offsets[i] = pso.vertex_layout.attributes[i].offset;
+        }
 
         let key = VkPipelineKey {
             vs: pso.vertex_shader.0,
             fs: pso.fragment_shader.0,
             cull_mode: pso.cull_mode as u32,
             blend_mode: pso.blend_mode as u32,
+            depth_test: pso.depth_test,
+            depth_write: pso.depth_write,
+            depth_compare: pso.depth_compare as u32,
             wireframe: self.wireframe,
             is_offscreen,
             stride,
             attr_count,
-            attr0_fmt: a0_fmt,
-            attr0_off: a0_off,
-            attr1_fmt: a1_fmt,
-            attr1_off: a1_off,
+            attr_formats,
+            attr_offsets,
         };
 
         if let Some(&cached) = self.graphics_pipelines.get(&key) {
@@ -787,7 +930,7 @@ impl VkPipeline {
                 offset: 0,
             });
         } else {
-            let max_attrs = (attr_count as usize).min(2);
+            let max_attrs = (attr_count as usize).min(8);
             for i in 0..max_attrs {
                 let a = &pso.vertex_layout.attributes[i];
                 attr_descs.push(VkVertexInputAttributeDescription {
@@ -863,13 +1006,24 @@ impl VkPipeline {
             alphaToOneEnable: VK_FALSE,
         };
 
+        let depth_compare = match pso.depth_compare {
+            DuctCompareOp::Never => VK_COMPARE_OP_NEVER,
+            DuctCompareOp::Less => VK_COMPARE_OP_LESS,
+            DuctCompareOp::Equal => VK_COMPARE_OP_EQUAL,
+            DuctCompareOp::LessEqual => VK_COMPARE_OP_LESS_OR_EQUAL,
+            DuctCompareOp::Greater => VK_COMPARE_OP_GREATER,
+            DuctCompareOp::NotEqual => VK_COMPARE_OP_NOT_EQUAL,
+            DuctCompareOp::GreaterEqual => VK_COMPARE_OP_GREATER_OR_EQUAL,
+            DuctCompareOp::Always => VK_COMPARE_OP_ALWAYS,
+        };
+
         let depth_stencil = VkPipelineDepthStencilStateCreateInfo {
             sType: VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
             pNext: std::ptr::null(),
             flags: 0,
-            depthTestEnable: VK_FALSE,
-            depthWriteEnable: VK_FALSE,
-            depthCompareOp: VK_COMPARE_OP_LESS_OR_EQUAL,
+            depthTestEnable: if pso.depth_test { VK_TRUE } else { VK_FALSE },
+            depthWriteEnable: if pso.depth_write { VK_TRUE } else { VK_FALSE },
+            depthCompareOp: depth_compare,
             depthBoundsTestEnable: VK_FALSE,
             stencilTestEnable: VK_FALSE,
             front: VkStencilOpState::default(),
@@ -1446,6 +1600,12 @@ impl RenderPipeline for VkPipeline {
                                     self.offscreen_render_pass = self.create_single_render_pass(
                                         VK_FORMAT_R8G8B8A8_UNORM,
                                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                        false,
+                                    );
+                                    self.offscreen_render_pass_with_depth = self.create_single_render_pass(
+                                        VK_FORMAT_R8G8B8A8_UNORM,
+                                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                        true,
                                     );
                                     self.init_swapchain(
                                         self.viewport_width,
@@ -1600,6 +1760,14 @@ impl RenderPipeline for VkPipeline {
                         );
                         self.offscreen_render_pass = VK_NULL_HANDLE;
                     }
+                    if self.offscreen_render_pass_with_depth != VK_NULL_HANDLE {
+                        (dfns.DestroyRenderPass)(
+                            self.device,
+                            self.offscreen_render_pass_with_depth,
+                            std::ptr::null(),
+                        );
+                        self.offscreen_render_pass_with_depth = VK_NULL_HANDLE;
+                    }
 
                     if self.image_available_sem != VK_NULL_HANDLE {
                         (dfns.DestroySemaphore)(
@@ -1753,15 +1921,21 @@ impl RenderPipeline for VkPipeline {
                         width: self.viewport_width,
                         height: self.viewport_height,
                     };
+                    let mut has_depth = true;
 
                     if is_offscreen {
                         if let Some(rt) = self.render_targets.get(&self.active_render_target) {
                             target_fb = rt.framebuffer;
-                            target_rp = self.offscreen_render_pass;
+                            target_rp = if rt.has_depth && self.offscreen_render_pass_with_depth != VK_NULL_HANDLE {
+                                self.offscreen_render_pass_with_depth
+                            } else {
+                                self.offscreen_render_pass
+                            };
                             target_extent = VkExtent2D {
                                 width: rt.width,
                                 height: rt.height,
                             };
+                            has_depth = rt.has_depth;
                         }
                     } else if self.swapchain_active {
                         if !self.swapchain_image_acquired {
@@ -1787,6 +1961,7 @@ impl RenderPipeline for VkPipeline {
                             target_fb = self.framebuffers[self.current_image_index as usize];
                             target_rp = self.render_pass;
                             target_extent = self.swapchain_extent;
+                            has_depth = self.depth_image_view != VK_NULL_HANDLE;
                         }
                     }
 
@@ -1817,14 +1992,20 @@ impl RenderPipeline for VkPipeline {
                         (dfns.CmdSetScissor)(self.command_buffer, 0, 1, &scissor);
 
                         if target_rp != VK_NULL_HANDLE && target_fb != VK_NULL_HANDLE {
-                            let clear_val = VkClearValue {
-                                float32: [
-                                    clear_color.r,
-                                    clear_color.g,
-                                    clear_color.b,
-                                    clear_color.a,
-                                ],
-                            };
+                            let clear_vals = [
+                                VkClearValue {
+                                    float32: [
+                                        clear_color.r,
+                                        clear_color.g,
+                                        clear_color.b,
+                                        clear_color.a,
+                                    ],
+                                },
+                                VkClearValue {
+                                    float32: [1.0, 0.0, 0.0, 0.0],
+                                },
+                            ];
+                            let clear_count = if has_depth { 2 } else { 1 };
                             let rp_begin = VkRenderPassBeginInfo {
                                 sType: VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
                                 pNext: std::ptr::null(),
@@ -1834,8 +2015,8 @@ impl RenderPipeline for VkPipeline {
                                     offset: VkOffset2D { x: 0, y: 0 },
                                     extent: target_extent,
                                 },
-                                clearValueCount: 1,
-                                pClearValues: &clear_val,
+                                clearValueCount: clear_count,
+                                pClearValues: clear_vals.as_ptr(),
                             };
                             (dfns.CmdBeginRenderPass)(
                                 self.command_buffer,
@@ -2872,30 +3053,122 @@ impl RenderPipeline for VkPipeline {
     ) -> Result<DuctRenderTargetHandle, DuctResult> {
         let color_tex = self.create_texture_2d(desc.width, desc.height, desc.format, None)?;
         let mut framebuffer = VK_NULL_HANDLE;
+        let mut depth_image = VK_NULL_HANDLE;
+        let mut depth_memory = VK_NULL_HANDLE;
+        let mut depth_view = VK_NULL_HANDLE;
+
+        let dfns = match &self.device_fns {
+            Some(d) if !self.device.is_null() => *d,
+            _ => return Err(DuctResult::ErrorInvalidState),
+        };
 
         if let Some(tex_rec) = self.textures.get(&color_tex) {
-            if tex_rec.view != VK_NULL_HANDLE && self.offscreen_render_pass != VK_NULL_HANDLE {
-                if let Some(dfns) = &self.device_fns {
-                    let fb_info = VkFramebufferCreateInfo {
-                        sType: VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            if tex_rec.view != VK_NULL_HANDLE {
+                let target_rp = if desc.has_depth && self.offscreen_render_pass_with_depth != VK_NULL_HANDLE {
+                    let depth_info = VkImageCreateInfo {
+                        sType: VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                         pNext: std::ptr::null(),
                         flags: 0,
-                        renderPass: self.offscreen_render_pass,
-                        attachmentCount: 1,
-                        pAttachments: &tex_rec.view,
-                        width: desc.width,
-                        height: desc.height,
-                        layers: 1,
+                        imageType: VK_IMAGE_TYPE_2D,
+                        format: VK_FORMAT_D32_SFLOAT,
+                        extent: VkExtent3D {
+                            width: desc.width,
+                            height: desc.height,
+                            depth: 1,
+                        },
+                        mipLevels: 1,
+                        arrayLayers: 1,
+                        samples: VK_SAMPLE_COUNT_1_BIT,
+                        tiling: VK_IMAGE_TILING_OPTIMAL,
+                        usage: VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                        sharingMode: VK_SHARING_MODE_EXCLUSIVE,
+                        queueFamilyIndexCount: 0,
+                        pQueueFamilyIndices: std::ptr::null(),
+                        initialLayout: VK_IMAGE_LAYOUT_UNDEFINED,
                     };
-                    let _ = unsafe {
-                        (dfns.CreateFramebuffer)(
-                            self.device,
-                            &fb_info,
-                            std::ptr::null(),
-                            &mut framebuffer,
-                        )
-                    };
+
+                    if unsafe {
+                        (dfns.CreateImage)(self.device, &depth_info, std::ptr::null(), &mut depth_image)
+                    } == VK_SUCCESS
+                    {
+                        let mut mem_reqs = VkMemoryRequirements::default();
+                        unsafe {
+                            (dfns.GetImageMemoryRequirements)(self.device, depth_image, &mut mem_reqs);
+                        }
+                        if let Some(mem_type) = self
+                            .find_memory_type(mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+                            .or_else(|| self.find_memory_type(mem_reqs.memoryTypeBits, 0))
+                        {
+                            let alloc_info = VkMemoryAllocateInfo {
+                                sType: VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                pNext: std::ptr::null(),
+                                allocationSize: mem_reqs.size,
+                                memoryTypeIndex: mem_type,
+                            };
+                            if unsafe {
+                                (dfns.AllocateMemory)(self.device, &alloc_info, std::ptr::null(), &mut depth_memory)
+                            } == VK_SUCCESS
+                            {
+                                unsafe {
+                                    let _ = (dfns.BindImageMemory)(self.device, depth_image, depth_memory, 0);
+                                }
+                                let iv_info = VkImageViewCreateInfo {
+                                    sType: VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                    pNext: std::ptr::null(),
+                                    flags: 0,
+                                    image: depth_image,
+                                    viewType: VK_IMAGE_VIEW_TYPE_2D,
+                                    format: VK_FORMAT_D32_SFLOAT,
+                                    components: VkComponentMapping::default(),
+                                    subresourceRange: VkImageSubresourceRange {
+                                        aspectMask: VK_IMAGE_ASPECT_DEPTH_BIT,
+                                        baseMipLevel: 0,
+                                        levelCount: 1,
+                                        baseArrayLayer: 0,
+                                        layerCount: 1,
+                                    },
+                                };
+                                unsafe {
+                                    let _ = (dfns.CreateImageView)(
+                                        self.device,
+                                        &iv_info,
+                                        std::ptr::null(),
+                                        &mut depth_view,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    self.offscreen_render_pass_with_depth
+                } else {
+                    self.offscreen_render_pass
+                };
+
+                let mut attachments = Vec::new();
+                attachments.push(tex_rec.view);
+                if desc.has_depth && depth_view != VK_NULL_HANDLE {
+                    attachments.push(depth_view);
                 }
+
+                let fb_info = VkFramebufferCreateInfo {
+                    sType: VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                    pNext: std::ptr::null(),
+                    flags: 0,
+                    renderPass: target_rp,
+                    attachmentCount: attachments.len() as u32,
+                    pAttachments: attachments.as_ptr(),
+                    width: desc.width,
+                    height: desc.height,
+                    layers: 1,
+                };
+                let _ = unsafe {
+                    (dfns.CreateFramebuffer)(
+                        self.device,
+                        &fb_info,
+                        std::ptr::null(),
+                        &mut framebuffer,
+                    )
+                };
             }
         }
 
@@ -2907,7 +3180,11 @@ impl RenderPipeline for VkPipeline {
                 width: desc.width,
                 height: desc.height,
                 color_tex,
+                depth_image,
+                depth_memory,
+                depth_view,
                 framebuffer,
+                has_depth: desc.has_depth,
             },
         );
         Ok(handle)
@@ -2919,10 +3196,21 @@ impl RenderPipeline for VkPipeline {
                 self.active_render_target = DuctRenderTargetHandle::INVALID;
             }
             if let Some(dfns) = &self.device_fns {
-                if !self.device.is_null() && rt.framebuffer != VK_NULL_HANDLE {
+                if !self.device.is_null() {
                     unsafe {
                         let _ = (dfns.DeviceWaitIdle)(self.device);
-                        (dfns.DestroyFramebuffer)(self.device, rt.framebuffer, std::ptr::null());
+                        if rt.framebuffer != VK_NULL_HANDLE {
+                            (dfns.DestroyFramebuffer)(self.device, rt.framebuffer, std::ptr::null());
+                        }
+                        if rt.depth_view != VK_NULL_HANDLE {
+                            (dfns.DestroyImageView)(self.device, rt.depth_view, std::ptr::null());
+                        }
+                        if rt.depth_image != VK_NULL_HANDLE {
+                            (dfns.DestroyImage)(self.device, rt.depth_image, std::ptr::null());
+                        }
+                        if rt.depth_memory != VK_NULL_HANDLE {
+                            (dfns.FreeMemory)(self.device, rt.depth_memory, std::ptr::null());
+                        }
                     }
                 }
             }
@@ -2936,13 +3224,109 @@ impl RenderPipeline for VkPipeline {
     fn bind_render_target(&mut self, handle: DuctRenderTargetHandle) -> DuctResult {
         if !handle.is_valid() {
             self.active_render_target = DuctRenderTargetHandle::INVALID;
-            DuctResult::Success
+            self.current_pass_is_offscreen = false;
         } else if self.render_targets.contains_key(&handle) {
             self.active_render_target = handle;
-            DuctResult::Success
+            self.current_pass_is_offscreen = true;
         } else {
-            DuctResult::ErrorResourceNotFound
+            return DuctResult::ErrorResourceNotFound;
         }
+
+        // If recording inside active command buffer, seamlessly transition render passes!
+        if self.cmd_recording {
+            if let Some(dfns) = &self.device_fns {
+                unsafe {
+                    if self.render_pass_active {
+                        (dfns.CmdEndRenderPass)(self.command_buffer);
+                        self.render_pass_active = false;
+                    }
+
+                    let mut target_fb = VK_NULL_HANDLE;
+                    let mut target_rp = VK_NULL_HANDLE;
+                    let mut target_extent = VkExtent2D {
+                        width: self.viewport_width,
+                        height: self.viewport_height,
+                    };
+                    let mut has_depth = true;
+
+                    if self.current_pass_is_offscreen {
+                        if let Some(rt) = self.render_targets.get(&self.active_render_target) {
+                            target_fb = rt.framebuffer;
+                            target_rp = if rt.has_depth && self.offscreen_render_pass_with_depth != VK_NULL_HANDLE {
+                                self.offscreen_render_pass_with_depth
+                            } else {
+                                self.offscreen_render_pass
+                            };
+                            target_extent = VkExtent2D {
+                                width: rt.width,
+                                height: rt.height,
+                            };
+                            has_depth = rt.has_depth;
+                        }
+                    } else if self.swapchain_active && self.swapchain_image_acquired {
+                        if (self.current_image_index as usize) < self.framebuffers.len() {
+                            target_fb = self.framebuffers[self.current_image_index as usize];
+                            target_rp = self.render_pass;
+                            target_extent = self.swapchain_extent;
+                            has_depth = self.depth_image_view != VK_NULL_HANDLE;
+                        }
+                    }
+
+                    if target_rp != VK_NULL_HANDLE && target_fb != VK_NULL_HANDLE {
+                        let vp = VkViewport {
+                            x: 0.0,
+                            y: 0.0,
+                            width: target_extent.width as f32,
+                            height: target_extent.height as f32,
+                            minDepth: 0.0,
+                            maxDepth: 1.0,
+                        };
+                        (dfns.CmdSetViewport)(self.command_buffer, 0, 1, &vp);
+
+                        let scissor = VkRect2D {
+                            offset: VkOffset2D { x: 0, y: 0 },
+                            extent: target_extent,
+                        };
+                        (dfns.CmdSetScissor)(self.command_buffer, 0, 1, &scissor);
+
+                        let clear_vals = [
+                            VkClearValue {
+                                float32: [
+                                    self.last_clear_color.r,
+                                    self.last_clear_color.g,
+                                    self.last_clear_color.b,
+                                    self.last_clear_color.a,
+                                ],
+                            },
+                            VkClearValue {
+                                float32: [1.0, 0.0, 0.0, 0.0],
+                            },
+                        ];
+                        let clear_count = if has_depth { 2 } else { 1 };
+                        let rp_begin = VkRenderPassBeginInfo {
+                            sType: VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                            pNext: std::ptr::null(),
+                            renderPass: target_rp,
+                            framebuffer: target_fb,
+                            renderArea: VkRect2D {
+                                offset: VkOffset2D { x: 0, y: 0 },
+                                extent: target_extent,
+                            },
+                            clearValueCount: clear_count,
+                            pClearValues: clear_vals.as_ptr(),
+                        };
+                        (dfns.CmdBeginRenderPass)(
+                            self.command_buffer,
+                            &rp_begin,
+                            VK_SUBPASS_CONTENTS_INLINE,
+                        );
+                        self.render_pass_active = true;
+                    }
+                }
+            }
+        }
+
+        DuctResult::Success
     }
 
     fn get_render_target_texture(
@@ -2976,26 +3360,40 @@ impl RenderPipeline for VkPipeline {
             VK_NULL_HANDLE
         };
 
-        let dst_img = if dst.is_valid() {
+        let is_dst_swapchain = !dst.is_valid();
+        let dst_img = if is_dst_swapchain {
+            if self.swapchain_active && (self.current_image_index as usize) < self.swapchain_images.len() {
+                self.swapchain_images[self.current_image_index as usize]
+            } else {
+                VK_NULL_HANDLE
+            }
+        } else {
             self.render_targets
                 .get(&dst)
                 .and_then(|rt| self.textures.get(&rt.color_tex))
                 .map(|t| t.image)
                 .unwrap_or(VK_NULL_HANDLE)
-        } else {
-            VK_NULL_HANDLE
         };
 
-        if src_img != VK_NULL_HANDLE
-            && dst_img != VK_NULL_HANDLE
-            && !self.cmd_recording
-            && src_w > 0
-            && src_h > 0
-            && dst_w > 0
-            && dst_h > 0
+        if src_img == VK_NULL_HANDLE
+            || dst_img == VK_NULL_HANDLE
+            || src_w == 0
+            || src_h == 0
+            || dst_w == 0
+            || dst_h == 0
         {
-            if let Some(dfns) = &self.device_fns {
-                unsafe {
+            return DuctResult::ErrorInvalidParameter;
+        }
+
+        if let Some(dfns) = &self.device_fns {
+            unsafe {
+                if self.cmd_recording && self.render_pass_active {
+                    (dfns.CmdEndRenderPass)(self.command_buffer);
+                    self.render_pass_active = false;
+                }
+
+                let one_time = !self.cmd_recording;
+                if one_time {
                     let _ = (dfns.DeviceWaitIdle)(self.device);
                     let _ = (dfns.ResetCommandBuffer)(self.command_buffer, 0);
                     let begin_info = VkCommandBufferBeginInfo {
@@ -3004,165 +3402,177 @@ impl RenderPipeline for VkPipeline {
                         flags: VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
                         pInheritanceInfo: std::ptr::null(),
                     };
-                    if (dfns.BeginCommandBuffer)(self.command_buffer, &begin_info) == VK_SUCCESS {
-                        let barriers_in = [
-                            VkImageMemoryBarrier {
-                                sType: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                                pNext: std::ptr::null(),
-                                srcAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                                dstAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
-                                oldLayout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                newLayout: VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                srcQueueFamilyIndex: !0u32,
-                                dstQueueFamilyIndex: !0u32,
-                                image: src_img,
-                                subresourceRange: VkImageSubresourceRange {
-                                    aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
-                                    baseMipLevel: 0,
-                                    levelCount: 1,
-                                    baseArrayLayer: 0,
-                                    layerCount: 1,
-                                },
-                            },
-                            VkImageMemoryBarrier {
-                                sType: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                                pNext: std::ptr::null(),
-                                srcAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                                dstAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
-                                oldLayout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                newLayout: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                srcQueueFamilyIndex: !0u32,
-                                dstQueueFamilyIndex: !0u32,
-                                image: dst_img,
-                                subresourceRange: VkImageSubresourceRange {
-                                    aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
-                                    baseMipLevel: 0,
-                                    levelCount: 1,
-                                    baseArrayLayer: 0,
-                                    layerCount: 1,
-                                },
-                            },
-                        ];
-                        (dfns.CmdPipelineBarrier)(
-                            self.command_buffer,
-                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                            VK_PIPELINE_STAGE_TRANSFER_BIT,
-                            0,
-                            0,
-                            std::ptr::null(),
-                            0,
-                            std::ptr::null(),
-                            2,
-                            barriers_in.as_ptr(),
-                        );
+                    let _ = (dfns.BeginCommandBuffer)(self.command_buffer, &begin_info);
+                }
 
-                        let blit_region = VkImageBlit {
-                            srcSubresource: VkImageSubresourceLayers {
-                                aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
-                                mipLevel: 0,
-                                baseArrayLayer: 0,
-                                layerCount: 1,
-                            },
-                            srcOffsets: [
-                                VkOffset3D { x: 0, y: 0, z: 0 },
-                                VkOffset3D {
-                                    x: src_w as i32,
-                                    y: src_h as i32,
-                                    z: 1,
-                                },
-                            ],
-                            dstSubresource: VkImageSubresourceLayers {
-                                aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
-                                mipLevel: 0,
-                                baseArrayLayer: 0,
-                                layerCount: 1,
-                            },
-                            dstOffsets: [
-                                VkOffset3D { x: 0, y: 0, z: 0 },
-                                VkOffset3D {
-                                    x: dst_w as i32,
-                                    y: dst_h as i32,
-                                    z: 1,
-                                },
-                            ],
-                        };
-                        (dfns.CmdBlitImage)(
-                            self.command_buffer,
-                            src_img,
-                            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                            dst_img,
-                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                            1,
-                            &blit_region,
-                            map_filter(filter),
-                        );
+                let barriers_in = [
+                    VkImageMemoryBarrier {
+                        sType: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        pNext: std::ptr::null(),
+                        srcAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                        dstAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
+                        oldLayout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        newLayout: VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        srcQueueFamilyIndex: !0u32,
+                        dstQueueFamilyIndex: !0u32,
+                        image: src_img,
+                        subresourceRange: VkImageSubresourceRange {
+                            aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
+                            baseMipLevel: 0,
+                            levelCount: 1,
+                            baseArrayLayer: 0,
+                            layerCount: 1,
+                        },
+                    },
+                    VkImageMemoryBarrier {
+                        sType: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        pNext: std::ptr::null(),
+                        srcAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                        dstAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
+                        oldLayout: if is_dst_swapchain {
+                            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                        } else {
+                            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                        },
+                        newLayout: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        srcQueueFamilyIndex: !0u32,
+                        dstQueueFamilyIndex: !0u32,
+                        image: dst_img,
+                        subresourceRange: VkImageSubresourceRange {
+                            aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
+                            baseMipLevel: 0,
+                            levelCount: 1,
+                            baseArrayLayer: 0,
+                            layerCount: 1,
+                        },
+                    },
+                ];
+                (dfns.CmdPipelineBarrier)(
+                    self.command_buffer,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0,
+                    0,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    2,
+                    barriers_in.as_ptr(),
+                );
 
-                        let barriers_out = [
-                            VkImageMemoryBarrier {
-                                sType: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                                pNext: std::ptr::null(),
-                                srcAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
-                                dstAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                                oldLayout: VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                newLayout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                srcQueueFamilyIndex: !0u32,
-                                dstQueueFamilyIndex: !0u32,
-                                image: src_img,
-                                subresourceRange: VkImageSubresourceRange {
-                                    aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
-                                    baseMipLevel: 0,
-                                    levelCount: 1,
-                                    baseArrayLayer: 0,
-                                    layerCount: 1,
-                                },
-                            },
-                            VkImageMemoryBarrier {
-                                sType: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                                pNext: std::ptr::null(),
-                                srcAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
-                                dstAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                                oldLayout: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                newLayout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                srcQueueFamilyIndex: !0u32,
-                                dstQueueFamilyIndex: !0u32,
-                                image: dst_img,
-                                subresourceRange: VkImageSubresourceRange {
-                                    aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
-                                    baseMipLevel: 0,
-                                    levelCount: 1,
-                                    baseArrayLayer: 0,
-                                    layerCount: 1,
-                                },
-                            },
-                        ];
-                        (dfns.CmdPipelineBarrier)(
-                            self.command_buffer,
-                            VK_PIPELINE_STAGE_TRANSFER_BIT,
-                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                            0,
-                            0,
-                            std::ptr::null(),
-                            0,
-                            std::ptr::null(),
-                            2,
-                            barriers_out.as_ptr(),
-                        );
+                let blit_region = VkImageBlit {
+                    srcSubresource: VkImageSubresourceLayers {
+                        aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
+                        mipLevel: 0,
+                        baseArrayLayer: 0,
+                        layerCount: 1,
+                    },
+                    srcOffsets: [
+                        VkOffset3D { x: 0, y: 0, z: 0 },
+                        VkOffset3D {
+                            x: src_w as i32,
+                            y: src_h as i32,
+                            z: 1,
+                        },
+                    ],
+                    dstSubresource: VkImageSubresourceLayers {
+                        aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
+                        mipLevel: 0,
+                        baseArrayLayer: 0,
+                        layerCount: 1,
+                    },
+                    dstOffsets: [
+                        VkOffset3D { x: 0, y: 0, z: 0 },
+                        VkOffset3D {
+                            x: dst_w as i32,
+                            y: dst_h as i32,
+                            z: 1,
+                        },
+                    ],
+                };
+                (dfns.CmdBlitImage)(
+                    self.command_buffer,
+                    src_img,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    dst_img,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    1,
+                    &blit_region,
+                    map_filter(filter),
+                );
 
-                        let _ = (dfns.EndCommandBuffer)(self.command_buffer);
-                        let submit = VkSubmitInfo {
-                            sType: VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                            pNext: std::ptr::null(),
-                            waitSemaphoreCount: 0,
-                            pWaitSemaphores: std::ptr::null(),
-                            pWaitDstStageMask: std::ptr::null(),
-                            commandBufferCount: 1,
-                            pCommandBuffers: &self.command_buffer,
-                            signalSemaphoreCount: 0,
-                            pSignalSemaphores: std::ptr::null(),
-                        };
-                        let _ = (dfns.QueueSubmit)(self.queue, 1, &submit, VK_NULL_HANDLE);
-                        let _ = (dfns.QueueWaitIdle)(self.queue);
-                    }
+                let dst_final_layout = if is_dst_swapchain {
+                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                } else {
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                };
+
+                let barriers_out = [
+                    VkImageMemoryBarrier {
+                        sType: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        pNext: std::ptr::null(),
+                        srcAccessMask: VK_ACCESS_TRANSFER_READ_BIT,
+                        dstAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                        oldLayout: VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        newLayout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        srcQueueFamilyIndex: !0u32,
+                        dstQueueFamilyIndex: !0u32,
+                        image: src_img,
+                        subresourceRange: VkImageSubresourceRange {
+                            aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
+                            baseMipLevel: 0,
+                            levelCount: 1,
+                            baseArrayLayer: 0,
+                            layerCount: 1,
+                        },
+                    },
+                    VkImageMemoryBarrier {
+                        sType: VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        pNext: std::ptr::null(),
+                        srcAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
+                        dstAccessMask: VK_ACCESS_MEMORY_READ_BIT,
+                        oldLayout: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        newLayout: dst_final_layout,
+                        srcQueueFamilyIndex: !0u32,
+                        dstQueueFamilyIndex: !0u32,
+                        image: dst_img,
+                        subresourceRange: VkImageSubresourceRange {
+                            aspectMask: VK_IMAGE_ASPECT_COLOR_BIT,
+                            baseMipLevel: 0,
+                            levelCount: 1,
+                            baseArrayLayer: 0,
+                            layerCount: 1,
+                        },
+                    },
+                ];
+                (dfns.CmdPipelineBarrier)(
+                    self.command_buffer,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    0,
+                    0,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    2,
+                    barriers_out.as_ptr(),
+                );
+
+                if one_time {
+                    let _ = (dfns.EndCommandBuffer)(self.command_buffer);
+                    let submit = VkSubmitInfo {
+                        sType: VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                        pNext: std::ptr::null(),
+                        waitSemaphoreCount: 0,
+                        pWaitSemaphores: std::ptr::null(),
+                        pWaitDstStageMask: std::ptr::null(),
+                        commandBufferCount: 1,
+                        pCommandBuffers: &self.command_buffer,
+                        signalSemaphoreCount: 0,
+                        pSignalSemaphores: std::ptr::null(),
+                    };
+                    let _ = (dfns.QueueSubmit)(self.queue, 1, &submit, VK_NULL_HANDLE);
+                    let _ = (dfns.QueueWaitIdle)(self.queue);
                 }
             }
         }
@@ -3514,13 +3924,21 @@ impl RenderPipeline for VkPipeline {
         DuctResult::Success
     }
 
-    fn set_uniform_int(&mut self, _name: &str, _val: i32) -> DuctResult {
+    fn set_uniform_int(&mut self, name: &str, val: i32) -> DuctResult {
+        let lower = name.to_ascii_lowercase();
+        if lower.contains("mode") {
+            self.push_constants.extra[3] = val as f32;
+        } else {
+            self.push_constants.extra[3] = val as f32;
+        }
         DuctResult::Success
     }
 
     fn set_uniform_float(&mut self, name: &str, val: f32) -> DuctResult {
         let lower = name.to_ascii_lowercase();
-        if lower.contains("scale") {
+        if lower.contains("time") {
+            self.push_constants.extra[0] = val;
+        } else if lower.contains("scale") {
             self.push_constants.params[2] = val;
             self.push_constants.params[3] = val;
         } else {
@@ -3531,7 +3949,13 @@ impl RenderPipeline for VkPipeline {
 
     fn set_uniform_vec2(&mut self, name: &str, x: f32, y: f32) -> DuctResult {
         let lower = name.to_ascii_lowercase();
-        if lower.contains("scale") {
+        if lower.contains("res") {
+            self.push_constants.extra[1] = x;
+            self.push_constants.extra[2] = y;
+        } else if lower.contains("mouse") {
+            self.push_constants.params[0] = x;
+            self.push_constants.params[1] = y;
+        } else if lower.contains("scale") {
             self.push_constants.params[2] = x;
             self.push_constants.params[3] = y;
         } else {
