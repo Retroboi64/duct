@@ -1,18 +1,19 @@
 [package]
-name = "duct"
+name = "duct-graphics"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
+documentation = "https://docs.rs/duct-graphics"
 keywords.workspace = true
 categories.workspace = true
 description = "Central router and dynamic pipeline loader for Project32 duct graphics subsystem"
 readme = "README.md"
 
 [lib]
+name = "duct"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

@@ -165,7 +165,7 @@ fn execute_build(config: &BuildConfig) {
         profile_name
     );
 
-    let mut packages = vec!["duct"];
+    let mut packages = vec!["duct-graphics"];
     if config.build_gl {
         packages.push("glduct");
     }

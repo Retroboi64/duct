@@ -23,7 +23,7 @@ categories = ["rendering::engine", "graphics", "game-development"]
 
 [workspace.dependencies]
 duct-core = { path = "crates/duct-core", version = "0.1.0" }
-duct = { path = "crates/duct", version = "0.1.0" }
+duct-graphics = { path = "crates/duct", version = "0.1.0" }
 glduct = { path = "crates/glduct", version = "0.1.0" }
 vkduct = { path = "crates/vkduct", version = "0.1.0" }
 dx11duct = { path = "crates/dx11duct", version = "0.1.0" }
@@ -42,7 +42,7 @@ description = "Project32 Duct Workspace Root"
 publish = false
 
 [dependencies]
-duct = { workspace = true }
+duct = { package = "duct-graphics", path = "crates/duct" }
 duct-core = { workspace = true }
 windowed = { workspace = true }
 
