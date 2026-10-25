@@ -78,31 +78,77 @@ This packages the release binaries, `renderer/` backend modules, C headers, and 
 
 ---
 
-## Running the Sandbox
+## Running the Examples
 
-The workspace includes an interactive sandbox ([`examples/sandbox.rs`](examples/sandbox.rs)) powered by [`windowed`](https://github.com/Retroboi64/windowed).
+Duct includes a suite of interactive examples powered by [`windowed`](https://github.com/Retroboi64/windowed) demonstrating 2D shapes, 3D perspective, retro PSX graphics, real-time lighting, and procedural shaders across all 4 backends (OpenGL, Vulkan, DirectX 11, DirectX 12).
 
-### Interactive Mode
+### 1. `examples/sandbox.rs` — 2D Base Shapes & FBO Sandbox
+Comprehensive testbed for window attachment, 2D primitives (`draw_triangle`, `draw_rect`, `draw_circle`, `draw_line`), FBO offscreen rendering, pixel readback, telemetry, and live backend hot-switching (`B` key).
 ```bash
-# Launch with automatic backend detection
-cargo run --example sandbox
-
-# Launch with a specific backend
 cargo run --example sandbox -- --gl
 cargo run --example sandbox -- --vk
 cargo run --example sandbox -- --dx11
 cargo run --example sandbox -- --dx12
 ```
-- Press **`B`** inside the window to live-switch between **OpenGL → Vulkan → DirectX 11 → DirectX 12** at runtime.
-- Press **`ESC`** to exit cleanly.
+
+### 2. `examples/cube3d.rs` — 3D Perspective Cube
+Full 3D pipeline demonstration featuring zero-dependency column-major `Mat4` (perspective projection, camera look-at, model rotation) and depth testing.
+```bash
+cargo run --example cube3d -- --gl
+cargo run --example cube3d -- --vk
+cargo run --example cube3d -- --dx11
+cargo run --example cube3d -- --dx12
+```
+
+### 3. `examples/psx_retro.rs` — PSX Retro Graphics Simulation
+Authentic 90s console rendering pipeline with:
+- Fixed-point vertex grid snapping & wobble/jitter in NDC clip space.
+- Low-resolution rasterization to a 320×240 offscreen Render Target (FBO).
+- Fullscreen nearest-neighbor upscale blit to the window.
+- Atmospheric distance depth fog.
+- Rotating low-poly gem and satellite primitives.
+```bash
+cargo run --example psx_retro -- --gl
+cargo run --example psx_retro -- --vk
+cargo run --example psx_retro -- --dx11
+cargo run --example psx_retro -- --dx12
+```
+
+### 4. `examples/lighting3d.rs` — 3D Real-Time Blinn-Phong Lighting
+Procedural UV sphere (24 rings × 32 sectors) with full vertex normals and dynamic multi-light Blinn-Phong shading:
+- Ambient environmental lighting.
+- Directional sunlight with diffuse cosine Lambertian falloff.
+- Orbiting point light with quadratic distance attenuation.
+- Specular specular gloss reflections and camera specular highlights.
+```bash
+cargo run --example lighting3d -- --gl
+cargo run --example lighting3d -- --vk
+cargo run --example lighting3d -- --dx11
+cargo run --example lighting3d -- --dx12
+```
+
+### 5. `examples/shaders.rs` — Advanced Procedural Shader Playground
+Interactive full-screen procedural shader lab with dynamic uniform buffers and live hot-reloading:
+- **Mode 1**: Cyberpunk Neon Plasma / Interference Warp.
+- **Mode 2**: Retro CRT Monitor (barrel curvature, horizontal scanlines, phosphor glow, RGB chromatic aberration split).
+- **Mode 3**: Real-Time 3D Raymarched Gyroid / SDF Minimal Surface with normal estimation and iridescent shading.
+- **Mode 4**: Water Ripple & Underwater Caustics.
+- **Controls**: Keys `[1]`, `[2]`, `[3]`, `[4]` to switch effects, `[R]` to live hot-reload fragment shader, `[Space]` to pause/resume time, `[B]` to switch backends.
+```bash
+cargo run --example shaders -- --gl
+cargo run --example shaders -- --vk
+cargo run --example shaders -- --dx11
+cargo run --example shaders -- --dx12
+```
 
 ### Automated Verification Mode (`--test`)
-Runs hardware initialization, offscreen FBO rendering, GPU pixel readback verification, shader hot-reloading, and 10 rendered frames before exiting automatically:
+All examples support the `--test` flag for headless/automated CI testing (renders 10 frames and exits with code 0):
 ```bash
 cargo run --example sandbox -- --gl --test
-cargo run --example sandbox -- --vk --test
-cargo run --example sandbox -- --dx11 --test
-cargo run --example sandbox -- --dx12 --test
+cargo run --example cube3d -- --vk --test
+cargo run --example psx_retro -- --dx11 --test
+cargo run --example lighting3d -- --dx12 --test
+cargo run --example shaders -- --gl --test
 ```
 
 ---

@@ -53,3 +53,19 @@ path = "build_dist.rs"
 [[example]]
 name = "sandbox"
 path = "examples/sandbox.rs"
+
+[[example]]
+name = "cube3d"
+path = "examples/cube3d.rs"
+
+[[example]]
+name = "psx_retro"
+path = "examples/psx_retro.rs"
+
+[[example]]
+name = "lighting3d"
+path = "examples/lighting3d.rs"
+
+[[example]]
+name = "shaders"
+path = "examples/shaders.rs"

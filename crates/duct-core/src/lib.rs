@@ -8,6 +8,9 @@
 use std::ffi::{c_char, c_void};
 use std::fmt;
 
+pub mod math;
+pub use math::*;
+
 /// Result status codes returned across the C-ABI boundary.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
