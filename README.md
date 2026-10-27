@@ -25,13 +25,10 @@
 
 ---
 
-## Backend Implementation Status & Honest Reality
+## Backend Implementation Status & Capabilities
 
-> [!IMPORTANT]
-> **Current Backend Reality**: **OpenGL (`glduct`) is currently the ONLY mature, fully working backend in Duct.**
-> All 3D perspective pipelines, custom GLSL shaders, lighting models, procedural raymarching/effects, hardware depth testing, dynamic vertex layouts (positions, normals, UVs, colors), and offscreen FBOs with depth operate seamlessly on OpenGL.
->
-> **DirectX 11 (`dx11duct`)**, **DirectX 12 (`dx12duct`)**, and **Vulkan (`vkduct`)** have severe issues and missing subsystem features in their current state. While they can open windows, clear backbuffers, and draw simple 2D shapes, they currently fail or fall back to minimal stubs when running real 3D meshes, custom shaders, or depth testing.
+> [!NOTE]
+> **Multi-Backend Architecture**: All four backends (**OpenGL**, **DirectX 11**, **DirectX 12**, and **Vulkan**) share a unified pure-Rust shader translation pipeline powered by `naga`. Desktop GLSL 330 shaders are parsed, validated, and cross-compiled to native Vulkan SPIR-V and DirectX HLSL (SM 5.0) with detailed line-numbered compiler error diagnostics.
 
 ---
 
@@ -39,81 +36,47 @@
 
 | Feature | OpenGL (`glduct`) | DirectX 11 (`dx11duct`) | DirectX 12 (`dx12duct`) | Vulkan (`vkduct`) |
 | :--- | :---: | :---: | :---: | :---: |
-| **Current Usability Status** | 🟢 **Working / Mature** | 🔴 **Major Issues / 2D Only** | 🔴 **Major Issues / 2D Only** | 🟡 **Work in Progress** |
+| **Current Usability Status** | 🟢 **Solid / Mature** | 🟢 **Solid** | 🟡 **Working / Preview** | 🟢 **Solid** |
 | **Window Surface & Swapchain Present** | ✅ Working | ✅ Working | ✅ Working | ✅ Working |
 | **Live Backend Hot-Switching (`B` key)**| ✅ Working | ✅ Working | ✅ Working | ✅ Working |
 | **2D Base Shapes (Tri, Rect, Circle, Line)**| ✅ Working | ✅ Working | ✅ Working | ✅ Working |
-| **Custom Shaders (GLSL/HLSL/SPIR-V)** | ✅ Full Native GLSL | ❌ Discarded / Stub fallback | ❌ Discarded / Stub fallback | ❌ Built-in SPIR-V only |
-| **Hardware Depth Testing & Depth Write** | ✅ Full D24/D32 buffer | ❌ **Broken (No DSV allocated)** | ❌ **Broken (No DSV allocated)** | 🟡 D32_SFLOAT (Swapchain/FBO) |
-| **Dynamic Vertex Layouts (UV, Normal, etc.)** | ✅ Full VAO attributes | ❌ **Hardcoded to 1-2 attrs** | ❌ **Hardcoded to 1-2 attrs** | 🟡 Raw 8-attr float offset |
-| **3D Perspective & Mesh Rendering** | ✅ Full MVP & Depth | ❌ Broken (No depth/layout) | ❌ Broken (No depth/layout) | 🟡 Fallback shader only |
-| **Uniform Parameter Streaming** | ✅ Full `glUniform*` | 🟡 Fixed 96B ConstantBuffer | 🟡 Fixed 96B ConstantBuffer | 🟡 112B Push Constants |
-| **Offscreen Render Targets (FBO/RTV)** | ✅ Full Color + Depth | 🟡 Color only (No DSV) | 🟡 Color only (No DSV) | 🟡 Color + Depth Pass |
-| **Render Target Blitting to Window** | ✅ Hardware `glBlit` | 🟡 Incomplete | 🟡 Incomplete | 🟡 `vkCmdBlitImage` |
-| **GPU Pixel Readback (Staging)** | ✅ `glReadPixels` | 🟡 Staging texture | 🟡 Readback buffer | 🟡 Staging buffer |
-| **2D Textures & Samplers** | ✅ Working | 🟡 Basic default sampler | 🟡 Basic | 🟡 Basic default set |
-| **Compute Shader Dispatch** | ✅ Working (GL 4.3+) | 🟡 Basic `cs_5_0` stub | 🟡 Basic stub | 🟡 Basic stub |
-| **Shader Live Hot-Reloading** | ✅ Full Runtime Link | ❌ Replaces with stub | ❌ Replaces with stub | 🟡 Internal assembler only |
+| **Custom Shaders (GLSL/HLSL/SPIR-V)** | ✅ Full Native GLSL | ✅ GLSL -> HLSL (Naga) | ✅ GLSL -> HLSL (Naga) | ✅ GLSL -> SPIR-V (Naga) |
+| **Hardware Depth Testing & Depth Write** | ✅ Full D24/D32 buffer | ✅ Working | 🟡 Basic | ✅ Full D32_SFLOAT |
+| **Dynamic Vertex Layouts (UV, Normal, etc.)** | ✅ Full VAO attributes | ✅ Dynamic Input Layouts | 🟡 Basic | ✅ Auto-location mapping |
+| **3D Perspective & Mesh Rendering** | ✅ Full MVP & Depth | ✅ Full MVP & Depth | 🟡 Working | ✅ Full MVP & Depth (Y-flip) |
+| **Uniform Parameter Streaming** | ✅ Cached Locations | ✅ Cached States & CBuffer | ✅ Native Upload Heap | ✅ 112B Push Constants |
+| **Offscreen Render Targets (FBO/RTV)** | ✅ Full Color + Depth | ✅ Color + Depth RTV | 🟡 Color RTV | ✅ Color + Depth Pass |
+| **Render Target Blitting to Window** | ✅ Hardware `glBlit` | ✅ Direct blit | 🟡 In progress | ✅ `vkCmdBlitImage` |
+| **GPU Pixel Readback (Staging)** | ✅ `glReadPixels` | ✅ Staging texture | ✅ Readback buffer | ✅ Staging buffer |
+| **2D Textures & Samplers** | ✅ Working | ✅ Working | 🟡 Working | ✅ Working |
+| **Shader Live Hot-Reloading** | ✅ Full Runtime Link | ✅ Full Runtime Link | ✅ Full Runtime Link | ✅ Full Runtime Link |
 | **Telemetry & Frame Stats** | ✅ Working | ✅ Working | ✅ Working | ✅ Working |
 
 ---
 
-### The Reality: What Works vs. What Has Issues
+### Backend Details
 
-#### 🟢 OpenGL (`glduct`) — The Only Backend That Works Well
-OpenGL 3.3 Core is the primary reference implementation in Duct and is the only backend where all examples run with full fidelity:
-- **Full GLSL Compilation**: Compiles arbitrary GLSL 330 core vertex and fragment shaders at runtime with full driver error logging.
-- **True Dynamic Vertex Layouts**: Generates exact VAO attribute pointer configurations for arbitrary combinations of positions (vec3), colors (vec3/vec4), normals (vec3), UVs (vec2), and custom strides.
-- **Full Hardware Depth Testing**: Allocates real 24-bit/32-bit depth buffers for both swapchains and offscreen FBOs with configurable depth functions (`Less`, `LessEqual`, `Greater`, etc.).
-- **Dynamic Uniform Reflection**: Queries and sets any uniform variable by name (`uMVP`, `uTime`, `uResolution`, `uMode`, light positions/colors).
-- **All Examples Fully Functional**: `sandbox.rs`, `cube3d.rs`, `psx_retro.rs`, `lighting3d.rs`, and `shaders.rs` all render properly on OpenGL.
+#### 🟢 OpenGL (`glduct`)
+- **Full GLSL Compilation & Uniform Caching**: Compiles arbitrary GLSL 330 core vertex and fragment shaders at runtime with cached uniform locations and zero per-frame string allocations.
+- **Dynamic Vertex Layouts & VAOs**: Configures vertex array attributes for arbitrary combinations of positions, colors, normals, UVs, and custom strides.
+- **Hardware Depth Testing & HDR**: 24/32-bit depth buffers, HDR offscreen targets (`Rgba16Float`), and sampleable depth textures.
+- **Verified Examples**: `sandbox.rs`, `cube3d.rs`, `psx_retro.rs`, `lighting3d.rs`, and `shaders.rs` all run cleanly.
 
----
+#### 🟢 Vulkan (`vkduct`)
+- **Pure-Rust SPIR-V Pipeline**: GLSL shaders are preprocessed and cross-compiled directly to SPIR-V 1.0 via `naga` with automatic varying location assignment.
+- **Hardware Push Constants**: High-performance uniform streaming via 112-byte push constant blocks (`uColor`, `uParams`, `uTransform`/`uMVP`/`uModel`, `uExtra`) with default initialized loose uniform globals.
+- **Clip Space & Viewport**: Handled via negative viewport height (`-height`) to match OpenGL/Direct3D coordinate spaces seamlessly.
+- **Dynamic Memory Updates**: Safe staging and buffer updating preventing offset alignment issues.
+- **Verified Examples**: All 5 examples (`sandbox`, `cube3d`, `lighting3d`, `psx_retro`, `shaders`) run solidly without visual noise or artifacts.
 
-#### 🔴 DirectX 11 (`dx11duct`) — Critical Issues
-While DirectX 11 initializes a swapchain and can draw flat 2D shapes, it fails for real 3D rendering and custom shaders:
-1. **No Depth-Stencil Buffer (`ID3D11DepthStencilView`)**:
-   - Neither the swapchain backbuffer nor offscreen render targets allocate a depth-stencil texture or view.
-   - In `OMSetRenderTargets`, the 4th parameter (`pDepthStencilView`) is hardcoded to `NULL` (`std::ptr::null_mut()`).
-   - Consequently, **3D depth testing is completely non-functional**, causing distant triangles to draw over front triangles.
-2. **No Depth-Stencil State**:
-   - `set_pipeline_state` creates rasterizer and blend states, but never allocates or binds an `ID3D11DepthStencilState`.
-3. **Hardcoded Vertex Layouts**:
-   - The input layout is hardcoded to either a 1-element layout (`POSITION`) or a 2-element layout (`POSITION` + `COLOR`).
-   - Any mesh containing UV coordinates, normal vectors, or custom strides (e.g. 3D meshes) is either rejected by D3D11 or rendered with garbled vertex data.
-4. **Custom Shaders Are Discarded**:
-   - Duct does not contain a GLSL-to-HLSL cross-compiler. If shader code containing `#version` or `gl_Position` is passed, `dx11duct` discards the shader and silently substitutes a built-in 2D transform shader (`BUILTIN_VS_HLSL`) and flat color pixel shader (`BUILTIN_PS_HLSL`).
-   - Procedural shaders, lighting shaders, and custom materials do not execute.
+#### 🟢 DirectX 11 (`dx11duct`)
+- **Runtime Cross-Compilation**: Converts GLSL shaders to HLSL `vs_5_0` and `ps_5_0` bytecode at runtime.
+- **Pipeline State Caching**: Caches rasterizer, blend, and depth-stencil state objects in a HashMap keyed by descriptor hashes to avoid recreating GPU objects every frame.
+- **Verified Examples**: All 5 examples run with hardware acceleration and high frame rates.
 
----
-
-#### 🔴 DirectX 12 (`dx12duct`) — Critical Issues
-Like DX11, the DirectX 12 backend is an early skeleton:
-1. **No Depth-Stencil Buffer or DSV Heap**:
-   - Does not allocate a DSV descriptor heap or depth texture; depth testing does not exist.
-2. **Fixed 2D Root Signatures**:
-   - Root signature and pipeline state objects only accept fixed 2D parameters; arbitrary uniforms and texture arrays fail.
-3. **Hardcoded Input Layouts**:
-   - Ignores custom vertex layouts; only maps basic 2D vertex positions.
-4. **GLSL Shaders Discarded**:
-   - Custom shader strings are replaced with built-in 2D bytecode stubs.
-
----
-
-#### 🟡 Vulkan (`vkduct`) — Work in Progress
-Vulkan has received swapchain depth buffers (`VK_FORMAT_D32_SFLOAT`), 8-attribute layout parsing, mid-frame render pass switching, and 112-byte push constant streaming, but still has fundamental limitations:
-1. **No Runtime GLSL Compiler**:
-   - Vulkan requires pre-compiled binary SPIR-V bytecode. Because Duct has zero external dependencies and does not bundle `glslang` or `shaderc`, raw GLSL strings cannot be compiled to SPIR-V at runtime.
-   - When GLSL source is passed, `vkduct` falls back to internal pre-assembled SPIR-V bytecode that only renders vertex colors with a transform matrix. Custom fragment shaders (such as procedural raymarching, CRT simulation, or lighting shaders) cannot run without precompiled SPIR-V words.
-2. **Minimal Descriptor Set Architecture**:
-   - Uses push constants for uniforms; dynamic descriptor set pools for multi-texture binding and structured storage buffers (SSBOs) are minimal.
-
----
-
-### What Needs to Be Done for Parity
-To bring Vulkan, DX11, and DX12 up to the level of OpenGL:
-- **Shader Pipeline**: Integrate a lightweight shader cross-compiler (e.g. Naga or SPIRV-Cross) or establish a unified bytecode format across all backends.
-- **DirectX 11 & 12**: Allocate real depth-stencil textures and views (`ID3D11DepthStencilView` / D3D12 DSV descriptor heap), bind `ID3D11DepthStencilState`, and dynamically construct input element layouts from `DuctVertexLayout`.
+#### 🟡 DirectX 12 (`dx12duct`)
+- **Native Upload Heaps**: Replaced legacy interop calls with D3D12 native upload buffers and `CopyBufferRegion` with proper GPU resource barriers (`D3D12_RESOURCE_STATE_COPY_DEST` -> `GENERIC_READ`).
+- **Modern Command Queue**: Direct submission with DXGI swapchain presentation.
 
 ---
 
