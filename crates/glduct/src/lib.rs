@@ -286,6 +286,11 @@ pub struct GlPipeline {
     last_bound_ebo: u32,
     current_index_format: DuctIndexFormat,
 
+    // Uniform location cache: gl_program_id -> HashMap<String, i32>
+    uniform_locations: HashMap<u32, HashMap<String, i32>>,
+    // Reusable cached CString uniform names (avoids per-call heap allocation)
+    cached_uniform_cstrs: HashMap<String, CString>,
+
     // Platform handles
     native_window: *mut c_void,
     native_display: *mut c_void,
@@ -328,6 +333,8 @@ impl Default for GlPipeline {
             last_bound_vbo: 0,
             last_bound_ebo: 0,
             current_index_format: DuctIndexFormat::U32,
+            uniform_locations: HashMap::new(),
+            cached_uniform_cstrs: HashMap::new(),
             native_window: std::ptr::null_mut(),
             native_display: std::ptr::null_mut(),
             hdc: std::ptr::null_mut(),
@@ -361,6 +368,32 @@ impl GlPipeline {
     #[inline]
     fn gl(&self) -> &Gl {
         self.gl.as_ref().expect("OpenGL function table not loaded")
+    }
+
+    fn get_uniform_location(&mut self, name: &str) -> i32 {
+        if self.active_program == 0 {
+            return -1;
+        }
+        let prog = self.active_program;
+        if let Some(locs) = self.uniform_locations.get(&prog) {
+            if let Some(&loc) = locs.get(name) {
+                return loc;
+            }
+        }
+        let gl = match &self.gl {
+            Some(g) => g,
+            None => return -1,
+        };
+        let c_str = self
+            .cached_uniform_cstrs
+            .entry(name.to_string())
+            .or_insert_with(|| CString::new(name).unwrap_or_default());
+        let loc = unsafe { (gl.GetUniformLocation)(prog, c_str.as_ptr()) };
+        self.uniform_locations
+            .entry(prog)
+            .or_default()
+            .insert(name.to_string(), loc);
+        loc
     }
 
     fn apply_vertex_layout_and_vbo(&self, gl: &Gl) {
@@ -740,6 +773,9 @@ impl RenderPipeline for GlPipeline {
             }
         }
 
+        self.uniform_locations.clear();
+        self.cached_uniform_cstrs.clear();
+
         #[cfg(target_os = "windows")]
         {
             use win_wgl::*;
@@ -1011,11 +1047,11 @@ impl RenderPipeline for GlPipeline {
         });
 
         // Invalidate cached programs that use this shader so they are relinked
+        let uniform_locs = &mut self.uniform_locations;
         self.programs.retain(|&(vs, fs), &mut prog| {
             if vs == handle || fs == handle {
-                if let Some(gl) = &self.gl {
-                    unsafe { (gl.DeleteProgram)(prog); }
-                }
+                uniform_locs.remove(&prog);
+                unsafe { (gl.DeleteProgram)(prog); }
                 false
             } else {
                 true
@@ -1033,9 +1069,12 @@ impl RenderPipeline for GlPipeline {
                     (gl.DeleteShader)(record.gl_id);
                 }
             }
+            let gl_opt = self.gl.as_ref();
+            let uniform_locs = &mut self.uniform_locations;
             self.programs.retain(|&(vs, fs), &mut prog| {
                 if vs == handle || fs == handle {
-                    if let Some(gl) = &self.gl {
+                    uniform_locs.remove(&prog);
+                    if let Some(gl) = gl_opt {
                         unsafe { (gl.DeleteProgram)(prog); }
                     }
                     false
@@ -1796,15 +1835,12 @@ impl RenderPipeline for GlPipeline {
         if self.active_program == 0 {
             return DuctResult::ErrorInvalidState;
         }
-        let gl = match &self.gl {
-            Some(g) => g,
-            None => return DuctResult::ErrorInvalidState,
-        };
-        let c_str = CString::new(name).unwrap_or_default();
-        unsafe {
-            let loc = (gl.GetUniformLocation)(self.active_program, c_str.as_ptr());
-            if loc >= 0 {
-                (gl.Uniform1i)(loc, val);
+        let loc = self.get_uniform_location(name);
+        if loc >= 0 {
+            if let Some(gl) = &self.gl {
+                unsafe {
+                    (gl.Uniform1i)(loc, val);
+                }
             }
         }
         DuctResult::Success
@@ -1814,15 +1850,12 @@ impl RenderPipeline for GlPipeline {
         if self.active_program == 0 {
             return DuctResult::ErrorInvalidState;
         }
-        let gl = match &self.gl {
-            Some(g) => g,
-            None => return DuctResult::ErrorInvalidState,
-        };
-        let c_str = CString::new(name).unwrap_or_default();
-        unsafe {
-            let loc = (gl.GetUniformLocation)(self.active_program, c_str.as_ptr());
-            if loc >= 0 {
-                (gl.Uniform1f)(loc, val);
+        let loc = self.get_uniform_location(name);
+        if loc >= 0 {
+            if let Some(gl) = &self.gl {
+                unsafe {
+                    (gl.Uniform1f)(loc, val);
+                }
             }
         }
         DuctResult::Success
@@ -1832,15 +1865,12 @@ impl RenderPipeline for GlPipeline {
         if self.active_program == 0 {
             return DuctResult::ErrorInvalidState;
         }
-        let gl = match &self.gl {
-            Some(g) => g,
-            None => return DuctResult::ErrorInvalidState,
-        };
-        let c_str = CString::new(name).unwrap_or_default();
-        unsafe {
-            let loc = (gl.GetUniformLocation)(self.active_program, c_str.as_ptr());
-            if loc >= 0 {
-                (gl.Uniform2f)(loc, x, y);
+        let loc = self.get_uniform_location(name);
+        if loc >= 0 {
+            if let Some(gl) = &self.gl {
+                unsafe {
+                    (gl.Uniform2f)(loc, x, y);
+                }
             }
         }
         DuctResult::Success
@@ -1850,15 +1880,12 @@ impl RenderPipeline for GlPipeline {
         if self.active_program == 0 {
             return DuctResult::ErrorInvalidState;
         }
-        let gl = match &self.gl {
-            Some(g) => g,
-            None => return DuctResult::ErrorInvalidState,
-        };
-        let c_str = CString::new(name).unwrap_or_default();
-        unsafe {
-            let loc = (gl.GetUniformLocation)(self.active_program, c_str.as_ptr());
-            if loc >= 0 {
-                (gl.Uniform3f)(loc, x, y, z);
+        let loc = self.get_uniform_location(name);
+        if loc >= 0 {
+            if let Some(gl) = &self.gl {
+                unsafe {
+                    (gl.Uniform3f)(loc, x, y, z);
+                }
             }
         }
         DuctResult::Success
@@ -1868,15 +1895,12 @@ impl RenderPipeline for GlPipeline {
         if self.active_program == 0 {
             return DuctResult::ErrorInvalidState;
         }
-        let gl = match &self.gl {
-            Some(g) => g,
-            None => return DuctResult::ErrorInvalidState,
-        };
-        let c_str = CString::new(name).unwrap_or_default();
-        unsafe {
-            let loc = (gl.GetUniformLocation)(self.active_program, c_str.as_ptr());
-            if loc >= 0 {
-                (gl.Uniform4f)(loc, x, y, z, w);
+        let loc = self.get_uniform_location(name);
+        if loc >= 0 {
+            if let Some(gl) = &self.gl {
+                unsafe {
+                    (gl.Uniform4f)(loc, x, y, z, w);
+                }
             }
         }
         DuctResult::Success
@@ -1886,15 +1910,12 @@ impl RenderPipeline for GlPipeline {
         if self.active_program == 0 {
             return DuctResult::ErrorInvalidState;
         }
-        let gl = match &self.gl {
-            Some(g) => g,
-            None => return DuctResult::ErrorInvalidState,
-        };
-        let c_str = CString::new(name).unwrap_or_default();
-        unsafe {
-            let loc = (gl.GetUniformLocation)(self.active_program, c_str.as_ptr());
-            if loc >= 0 {
-                (gl.UniformMatrix4fv)(loc, 1, GL_FALSE, elements.as_ptr());
+        let loc = self.get_uniform_location(name);
+        if loc >= 0 {
+            if let Some(gl) = &self.gl {
+                unsafe {
+                    (gl.UniformMatrix4fv)(loc, 1, GL_FALSE, elements.as_ptr());
+                }
             }
         }
         DuctResult::Success
