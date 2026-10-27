@@ -985,6 +985,12 @@ impl Dx12Pipeline {
             &mut code_blob,
             &mut err_blob,
         );
+        if hr != S_OK && !err_blob.is_null() {
+            let ptr = blob_pointer(err_blob);
+            let len = blob_size(err_blob);
+            let err_str = String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len));
+            eprintln!("[dx12duct][ERROR] D3DCompile failed:\n{}", err_str);
+        }
         if !err_blob.is_null() {
             com_release(err_blob);
         }
@@ -1796,50 +1802,52 @@ impl RenderPipeline for Dx12Pipeline {
         }
         let slice = unsafe { std::slice::from_raw_parts(desc.source_bytes, desc.source_len) };
         let src_str = std::str::from_utf8(slice).unwrap_or("");
-        let is_glsl = src_str.contains("#version") || src_str.contains("gl_Position");
+        let is_glsl = src_str.contains("#version") || src_str.contains("gl_Position") || src_str.contains("precision ");
 
-        let mut shader_obj = std::ptr::null_mut();
+        let hlsl_code: Vec<u8> = if is_glsl {
+            match duct_core::shader::glsl_to_hlsl(src_str, desc.stage) {
+                Ok(hlsl_str) => hlsl_str.into_bytes(),
+                Err(err) => {
+                    eprintln!("[dx12duct][ERROR] GLSL to HLSL cross-compilation failed:\n{}", err);
+                    return Err(DuctResult::ErrorInvalidParameter);
+                }
+            }
+        } else {
+            slice.to_vec()
+        };
+
         let mut shader_obj_color = std::ptr::null_mut();
-        let mut bytecode = Vec::new();
         let mut bytecode_color = Vec::new();
 
+        let (target, is_vs, is_ps, is_cs) = match desc.stage {
+            DuctShaderStage::Vertex => (b"vs_5_0\0".as_slice(), true, false, false),
+            DuctShaderStage::Fragment => (b"ps_5_0\0".as_slice(), false, true, false),
+            DuctShaderStage::Compute => (b"cs_5_0\0".as_slice(), false, false, true),
+        };
+
+        let (bytecode, shader_obj) = unsafe {
+            if let Some(bc) = self.compile_hlsl(&hlsl_code, b"main\0", target) {
+                let obj = if is_vs {
+                    self.create_vs(&bc)
+                } else if is_ps {
+                    self.create_ps(&bc)
+                } else if is_cs {
+                    self.create_cs(&bc)
+                } else {
+                    std::ptr::null_mut()
+                };
+                (bc, obj)
+            } else {
+                eprintln!("[dx12duct][ERROR] Failed to compile HLSL shader for {:?}", desc.stage);
+                return Err(DuctResult::ErrorInvalidParameter);
+            }
+        };
+
         unsafe {
-            match desc.stage {
-                DuctShaderStage::Vertex => {
-                    let hlsl = if is_glsl { BUILTIN_VS_HLSL } else { slice };
-                    if let Some(bc) = self
-                        .compile_hlsl(hlsl, b"main\0", b"vs_5_0\0")
-                        .or_else(|| self.compile_hlsl(BUILTIN_VS_HLSL, b"main\0", b"vs_5_0\0"))
-                    {
-                        shader_obj = self.create_vs(&bc);
-                        bytecode = bc;
-                    }
-                    if let Some(bc_col) =
-                        self.compile_hlsl(BUILTIN_VS_COLOR_HLSL, b"main\0", b"vs_5_0\0")
-                    {
-                        shader_obj_color = self.create_vs(&bc_col);
-                        bytecode_color = bc_col;
-                    }
-                }
-                DuctShaderStage::Fragment => {
-                    let hlsl = if is_glsl { BUILTIN_PS_HLSL } else { slice };
-                    if let Some(bc) = self
-                        .compile_hlsl(hlsl, b"main\0", b"ps_5_0\0")
-                        .or_else(|| self.compile_hlsl(BUILTIN_PS_HLSL, b"main\0", b"ps_5_0\0"))
-                    {
-                        shader_obj = self.create_ps(&bc);
-                        bytecode = bc;
-                    }
-                }
-                DuctShaderStage::Compute => {
-                    let hlsl = if is_glsl { BUILTIN_CS_HLSL } else { slice };
-                    if let Some(bc) = self
-                        .compile_hlsl(hlsl, b"main\0", b"cs_5_0\0")
-                        .or_else(|| self.compile_hlsl(BUILTIN_CS_HLSL, b"main\0", b"cs_5_0\0"))
-                    {
-                        shader_obj = self.create_cs(&bc);
-                        bytecode = bc;
-                    }
+            if is_vs {
+                if let Some(bc_col) = self.compile_hlsl(BUILTIN_VS_COLOR_HLSL, b"main\0", b"vs_5_0\0") {
+                    shader_obj_color = self.create_vs(&bc_col);
+                    bytecode_color = bc_col;
                 }
             }
         }
@@ -1868,43 +1876,43 @@ impl RenderPipeline for Dx12Pipeline {
         }
         let slice = unsafe { std::slice::from_raw_parts(desc.source_bytes, desc.source_len) };
         let src_str = std::str::from_utf8(slice).unwrap_or("");
-        let is_glsl = src_str.contains("#version") || src_str.contains("gl_Position");
+        let is_glsl = src_str.contains("#version") || src_str.contains("gl_Position") || src_str.contains("precision ");
 
-        unsafe {
-            let mut new_obj = std::ptr::null_mut();
-            let mut new_bc = Vec::new();
-            match desc.stage {
-                DuctShaderStage::Vertex => {
-                    let hlsl = if is_glsl { BUILTIN_VS_HLSL } else { slice };
-                    if let Some(bc) = self
-                        .compile_hlsl(hlsl, b"main\0", b"vs_5_0\0")
-                        .or_else(|| self.compile_hlsl(BUILTIN_VS_HLSL, b"main\0", b"vs_5_0\0"))
-                    {
-                        new_obj = self.create_vs(&bc);
-                        new_bc = bc;
-                    }
-                }
-                DuctShaderStage::Fragment => {
-                    let hlsl = if is_glsl { BUILTIN_PS_HLSL } else { slice };
-                    if let Some(bc) = self
-                        .compile_hlsl(hlsl, b"main\0", b"ps_5_0\0")
-                        .or_else(|| self.compile_hlsl(BUILTIN_PS_HLSL, b"main\0", b"ps_5_0\0"))
-                    {
-                        new_obj = self.create_ps(&bc);
-                        new_bc = bc;
-                    }
-                }
-                DuctShaderStage::Compute => {
-                    let hlsl = if is_glsl { BUILTIN_CS_HLSL } else { slice };
-                    if let Some(bc) = self
-                        .compile_hlsl(hlsl, b"main\0", b"cs_5_0\0")
-                        .or_else(|| self.compile_hlsl(BUILTIN_CS_HLSL, b"main\0", b"cs_5_0\0"))
-                    {
-                        new_obj = self.create_cs(&bc);
-                        new_bc = bc;
-                    }
+        let hlsl_code: Vec<u8> = if is_glsl {
+            match duct_core::shader::glsl_to_hlsl(src_str, desc.stage) {
+                Ok(hlsl_str) => hlsl_str.into_bytes(),
+                Err(err) => {
+                    eprintln!("[dx12duct][ERROR] Shader reload GLSL cross-compilation failed:\n{}", err);
+                    return DuctResult::ErrorInvalidParameter;
                 }
             }
+        } else {
+            slice.to_vec()
+        };
+
+        let (target, is_vs, is_ps, is_cs) = match desc.stage {
+            DuctShaderStage::Vertex => (b"vs_5_0\0".as_slice(), true, false, false),
+            DuctShaderStage::Fragment => (b"ps_5_0\0".as_slice(), false, true, false),
+            DuctShaderStage::Compute => (b"cs_5_0\0".as_slice(), false, false, true),
+        };
+
+        unsafe {
+            let (new_bc, new_obj) = if let Some(bc) = self.compile_hlsl(&hlsl_code, b"main\0", target) {
+                let obj = if is_vs {
+                    self.create_vs(&bc)
+                } else if is_ps {
+                    self.create_ps(&bc)
+                } else if is_cs {
+                    self.create_cs(&bc)
+                } else {
+                    std::ptr::null_mut()
+                };
+                (bc, obj)
+            } else {
+                eprintln!("[dx12duct][ERROR] Shader reload HLSL compile failed for {:?}", desc.stage);
+                return DuctResult::ErrorInvalidParameter;
+            };
+
             if let Some(rec) = self.shaders.get_mut(&handle) {
                 com_release(rec.shader_obj);
                 rec.shader_obj = new_obj;

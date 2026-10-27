@@ -2148,7 +2148,7 @@ impl RenderPipeline for VkPipeline {
 
         let slice = unsafe { std::slice::from_raw_parts(desc.source_bytes, desc.source_len) };
         let mut module = VK_NULL_HANDLE;
-        let mut module_with_color = VK_NULL_HANDLE;
+        let module_with_color = VK_NULL_HANDLE;
         let mut is_custom_spv = false;
 
         // 1. Check if caller provided raw SPIR-V binary (Magic 0x07230203)
@@ -2178,21 +2178,28 @@ impl RenderPipeline for VkPipeline {
             }
         }
 
-        // 2. If GLSL source string was provided, compile using built-in SPIR-V generator
+        // 2. If GLSL source string was provided, compile using Naga cross-compiler
         if !is_custom_spv {
-            unsafe {
-                match desc.stage {
-                    DuctShaderStage::Vertex => {
-                        module = self.create_spv_module(&spv::build_vertex_shader_spv(false));
-                        module_with_color =
-                            self.create_spv_module(&spv::build_vertex_shader_spv(true));
+            let src_str = match std::str::from_utf8(slice) {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("[vkduct][ERROR] Shader source is neither valid UTF-8 nor SPIR-V binary");
+                    return Err(DuctResult::ErrorInvalidParameter);
+                }
+            };
+
+            match duct_core::shader::glsl_to_spirv(src_str, desc.stage) {
+                Ok(spv_words) => {
+                    module = unsafe { self.create_spv_module(&spv_words) };
+                    if module == VK_NULL_HANDLE {
+                        eprintln!("[vkduct][ERROR] Failed to create Vulkan shader module from compiled SPIR-V");
+                        return Err(DuctResult::ErrorInitializationFailed);
                     }
-                    DuctShaderStage::Fragment => {
-                        module = self.create_spv_module(&spv::build_fragment_shader_spv());
-                    }
-                    DuctShaderStage::Compute => {
-                        module = self.create_spv_module(&spv::build_compute_shader_spv());
-                    }
+                    is_custom_spv = true;
+                }
+                Err(err) => {
+                    eprintln!("[vkduct][ERROR] Shader compilation failed:\n{}", err);
+                    return Err(DuctResult::ErrorInvalidParameter);
                 }
             }
         }
@@ -2221,7 +2228,7 @@ impl RenderPipeline for VkPipeline {
 
         let slice = unsafe { std::slice::from_raw_parts(desc.source_bytes, desc.source_len) };
         let mut new_module = VK_NULL_HANDLE;
-        let mut new_module_color = VK_NULL_HANDLE;
+        let new_module_color = VK_NULL_HANDLE;
         let mut is_custom_spv = false;
 
         if slice.len() >= 4 && slice.len() % 4 == 0 {
@@ -2251,19 +2258,26 @@ impl RenderPipeline for VkPipeline {
         }
 
         if !is_custom_spv {
-            unsafe {
-                match desc.stage {
-                    DuctShaderStage::Vertex => {
-                        new_module = self.create_spv_module(&spv::build_vertex_shader_spv(false));
-                        new_module_color =
-                            self.create_spv_module(&spv::build_vertex_shader_spv(true));
+            let src_str = match std::str::from_utf8(slice) {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("[vkduct][ERROR] Shader reload source is neither valid UTF-8 nor SPIR-V binary");
+                    return DuctResult::ErrorInvalidParameter;
+                }
+            };
+
+            match duct_core::shader::glsl_to_spirv(src_str, desc.stage) {
+                Ok(spv_words) => {
+                    new_module = unsafe { self.create_spv_module(&spv_words) };
+                    if new_module == VK_NULL_HANDLE {
+                        eprintln!("[vkduct][ERROR] Failed to create Vulkan shader module from reloaded SPIR-V");
+                        return DuctResult::ErrorInitializationFailed;
                     }
-                    DuctShaderStage::Fragment => {
-                        new_module = self.create_spv_module(&spv::build_fragment_shader_spv());
-                    }
-                    DuctShaderStage::Compute => {
-                        new_module = self.create_spv_module(&spv::build_compute_shader_spv());
-                    }
+                    is_custom_spv = true;
+                }
+                Err(err) => {
+                    eprintln!("[vkduct][ERROR] Shader reload compilation failed:\n{}", err);
+                    return DuctResult::ErrorInvalidParameter;
                 }
             }
         }
