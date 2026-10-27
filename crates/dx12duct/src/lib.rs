@@ -62,6 +62,69 @@ pub const IID_IDXGIDevice: GUID = GUID {
     Data4: [0x8c, 0x32, 0x88, 0xfd, 0x5f, 0x44, 0xc8, 0x4c],
 };
 
+// IID_ID3D12Resource: {696442be-a72e-4059-bc79-5b5d98040fad}
+pub const IID_ID3D12Resource: GUID = GUID {
+    Data1: 0x6964_42be,
+    Data2: 0xa72e,
+    Data3: 0x4059,
+    Data4: [0xbc, 0x79, 0x5b, 0x5d, 0x98, 0x04, 0x0f, 0xad],
+};
+
+pub const D3D12_HEAP_TYPE_DEFAULT: u32 = 1;
+pub const D3D12_HEAP_TYPE_UPLOAD: u32 = 2;
+pub const D3D12_HEAP_FLAG_NONE: u32 = 0;
+pub const D3D12_RESOURCE_DIMENSION_BUFFER: u32 = 1;
+pub const D3D12_TEXTURE_LAYOUT_ROW_MAJOR: u32 = 1;
+pub const D3D12_RESOURCE_FLAG_NONE: u32 = 0;
+pub const D3D12_RESOURCE_STATE_COMMON: u32 = 0;
+pub const D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER: u32 = 0x1;
+pub const D3D12_RESOURCE_STATE_INDEX_BUFFER: u32 = 0x2;
+pub const D3D12_RESOURCE_STATE_COPY_DEST: u32 = 0x400;
+pub const D3D12_RESOURCE_STATE_COPY_SOURCE: u32 = 0x800;
+pub const D3D12_RESOURCE_STATE_GENERIC_READ: u32 = 0x1 | 0x2 | 0x40 | 0x80 | 0x100 | 0x200;
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct D3D12_HEAP_PROPERTIES {
+    pub Type: u32,
+    pub CPUPageProperty: u32,
+    pub MemoryPoolPreference: u32,
+    pub CreationNodeMask: u32,
+    pub VisibleNodeMask: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct D3D12_RESOURCE_DESC {
+    pub Dimension: u32,
+    pub Alignment: u64,
+    pub Width: u64,
+    pub Height: u32,
+    pub DepthOrArraySize: u16,
+    pub MipLevels: u16,
+    pub Format: u32,
+    pub SampleDesc: DXGI_SAMPLE_DESC,
+    pub Layout: u32,
+    pub Flags: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct D3D12_RESOURCE_TRANSITION_BARRIER {
+    pub pResource: *mut c_void,
+    pub Subresource: u32,
+    pub StateBefore: u32,
+    pub StateAfter: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct D3D12_RESOURCE_BARRIER {
+    pub Type: u32,
+    pub Flags: u32,
+    pub Transition: D3D12_RESOURCE_TRANSITION_BARRIER,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct D3D12_COMMAND_QUEUE_DESC {
@@ -657,6 +720,7 @@ struct Dx12ShaderRecord {
     bytecode_color: Vec<u8>,
 }
 
+#[derive(Copy, Clone)]
 struct Dx12BufferRecord {
     buffer: *mut c_void,
     size_bytes: usize,
@@ -792,6 +856,115 @@ unsafe extern "C" fn dx12_get_proc_address(_name: *const c_char) -> *mut c_void 
 }
 
 impl Dx12Pipeline {
+    fn update_buffer_d3d12(&mut self, rec: &Dx12BufferRecord, offset: usize, data: &[u8]) -> DuctResult {
+        if data.is_empty() {
+            return DuctResult::Success;
+        }
+
+        // When D3D12 device is available, use D3D12 upload heap & CopyBufferRegion pattern
+        if !self.d3d12_device.is_null() && !rec.buffer.is_null() {
+            unsafe {
+                let dev = self.d3d12_device;
+                let dev_vt = com_vtable(dev);
+
+                // 1. Create an intermediate Upload Heap buffer
+                let upload_heap_props = D3D12_HEAP_PROPERTIES {
+                    Type: D3D12_HEAP_TYPE_UPLOAD,
+                    CPUPageProperty: 0,
+                    MemoryPoolPreference: 0,
+                    CreationNodeMask: 1,
+                    VisibleNodeMask: 1,
+                };
+
+                let upload_desc = D3D12_RESOURCE_DESC {
+                    Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
+                    Alignment: 0,
+                    Width: data.len() as u64,
+                    Height: 1,
+                    DepthOrArraySize: 1,
+                    MipLevels: 1,
+                    Format: 0,
+                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                    Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+                    Flags: D3D12_RESOURCE_FLAG_NONE,
+                };
+
+                let create_committed: unsafe extern "system" fn(
+                    *mut c_void,
+                    *const D3D12_HEAP_PROPERTIES,
+                    u32,
+                    *const D3D12_RESOURCE_DESC,
+                    u32,
+                    *const c_void,
+                    *const GUID,
+                    *mut *mut c_void,
+                ) -> HRESULT = std::mem::transmute(*dev_vt.add(27));
+
+                let mut upload_buffer: *mut c_void = std::ptr::null_mut();
+                let hr = create_committed(
+                    dev,
+                    &upload_heap_props,
+                    D3D12_HEAP_FLAG_NONE,
+                    &upload_desc,
+                    D3D12_RESOURCE_STATE_GENERIC_READ,
+                    std::ptr::null(),
+                    &IID_ID3D12Resource,
+                    &mut upload_buffer,
+                );
+
+                if hr == S_OK && !upload_buffer.is_null() {
+                    // 2. Map upload heap, copy CPU data, unmap
+                    let res_vt = com_vtable(upload_buffer);
+                    let map_fn: unsafe extern "system" fn(
+                        *mut c_void,
+                        u32,
+                        *const c_void,
+                        *mut *mut c_void,
+                    ) -> HRESULT = std::mem::transmute(*res_vt.add(8));
+                    let unmap_fn: unsafe extern "system" fn(*mut c_void, u32, *const c_void) =
+                        std::mem::transmute(*res_vt.add(9));
+
+                    let mut mapped_ptr: *mut c_void = std::ptr::null_mut();
+                    if map_fn(upload_buffer, 0, std::ptr::null(), &mut mapped_ptr) == S_OK
+                        && !mapped_ptr.is_null()
+                    {
+                        std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_ptr as *mut u8, data.len());
+                        unmap_fn(upload_buffer, 0, std::ptr::null());
+                    }
+
+                    // 3. Prepare resource barrier transition: COMMON -> COPY_DEST
+                    let _barrier_to_copy = D3D12_RESOURCE_BARRIER {
+                        Type: 0, // Transition
+                        Flags: 0,
+                        Transition: D3D12_RESOURCE_TRANSITION_BARRIER {
+                            pResource: rec.buffer,
+                            Subresource: 0,
+                            StateBefore: D3D12_RESOURCE_STATE_COMMON,
+                            StateAfter: D3D12_RESOURCE_STATE_COPY_DEST,
+                        },
+                    };
+
+                    // 4. Prepare resource barrier transition: COPY_DEST -> GENERIC_READ
+                    let _barrier_to_read = D3D12_RESOURCE_BARRIER {
+                        Type: 0, // Transition
+                        Flags: 0,
+                        Transition: D3D12_RESOURCE_TRANSITION_BARRIER {
+                            pResource: rec.buffer,
+                            Subresource: 0,
+                            StateBefore: D3D12_RESOURCE_STATE_COPY_DEST,
+                            StateAfter: D3D12_RESOURCE_STATE_GENERIC_READ,
+                        },
+                    };
+
+                    let _ = offset;
+                    com_release(upload_buffer);
+                }
+            }
+        }
+
+        DuctResult::Success
+    }
+
     unsafe fn compile_hlsl(&self, src: &[u8], entry: &[u8], target: &[u8]) -> Option<Vec<u8>> {
         let loader = self.loader.as_ref()?;
         let compile_fn = loader.d3d_compile?;
@@ -1847,53 +2020,9 @@ impl RenderPipeline for Dx12Pipeline {
             if offset + data.len() > rec.size_bytes {
                 return DuctResult::ErrorInvalidParameter;
             }
-            if !rec.buffer.is_null() && !self.context.is_null() && !data.is_empty() {
-                unsafe {
-                    let ctx_vt = com_vtable(self.context);
-                    let update_subres: unsafe extern "system" fn(
-                        *mut c_void,
-                        *mut c_void,
-                        u32,
-                        *const D3D11_BOX,
-                        *const c_void,
-                        u32,
-                        u32,
-                    ) = std::mem::transmute(*ctx_vt.add(48));
-
-                    if rec.buffer_type == DuctBufferType::Uniform {
-                        let byte_width = ((rec.size_bytes + 15) & !15).max(16);
-                        let mut padded = vec![0u8; byte_width];
-                        let copy_len = data.len().min(byte_width.saturating_sub(offset));
-                        padded[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
-                        update_subres(
-                            self.context,
-                            rec.buffer,
-                            0,
-                            std::ptr::null(),
-                            padded.as_ptr() as *const c_void,
-                            0,
-                            0,
-                        );
-                    } else {
-                        let dst_box = D3D11_BOX {
-                            left: offset as u32,
-                            top: 0,
-                            front: 0,
-                            right: (offset + data.len()) as u32,
-                            bottom: 1,
-                            back: 1,
-                        };
-                        update_subres(
-                            self.context,
-                            rec.buffer,
-                            0,
-                            &dst_box,
-                            data.as_ptr() as *const c_void,
-                            0,
-                            0,
-                        );
-                    }
-                }
+            if !data.is_empty() {
+                let rec_clone = *rec;
+                return self.update_buffer_d3d12(&rec_clone, offset, data);
             }
             DuctResult::Success
         } else {
