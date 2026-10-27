@@ -237,6 +237,7 @@ struct GlTextureRecord {
 struct GlRenderTargetRecord {
     fbo_id: u32,
     color_texture_handle: DuctTextureHandle,
+    depth_texture_handle: DuctTextureHandle,
     depth_rbo: u32,
     width: u32,
     height: u32,
@@ -1241,20 +1242,29 @@ impl RenderPipeline for GlPipeline {
             None => return Err(DuctResult::ErrorInvalidState),
         };
 
-        let (internal_fmt, gl_fmt) = match format {
-            DuctTextureFormat::Rgba8 => (GL_RGBA8, GL_RGBA),
-            DuctTextureFormat::Rgb8 => (GL_RGB8, GL_RGB),
-            DuctTextureFormat::R8 => (GL_R8, GL_RED),
+        let (internal_fmt, gl_fmt, gl_type) = match format {
+            DuctTextureFormat::Rgba8 => (GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE),
+            DuctTextureFormat::Rgb8 => (GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE),
+            DuctTextureFormat::R8 => (GL_R8, GL_RED, GL_UNSIGNED_BYTE),
+            DuctTextureFormat::Rgba16Float => (GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT),
+            DuctTextureFormat::Depth32Float => (GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT),
         };
 
         let mut gl_id = 0u32;
         unsafe {
             (gl.GenTextures)(1, &mut gl_id);
             (gl.BindTexture)(GL_TEXTURE_2D, gl_id);
-            (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
-            (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR as i32);
-            (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT as i32);
-            (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT as i32);
+            if format == DuctTextureFormat::Depth32Float {
+                (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST as i32);
+                (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST as i32);
+                (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as i32);
+                (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as i32);
+            } else {
+                (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
+                (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR as i32);
+                (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT as i32);
+                (gl.TexParameteri)(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT as i32);
+            }
 
             if format == DuctTextureFormat::R8 || format == DuctTextureFormat::Rgb8 {
                 (gl.PixelStorei)(GL_UNPACK_ALIGNMENT, 1);
@@ -1269,7 +1279,7 @@ impl RenderPipeline for GlPipeline {
                 height as i32,
                 0,
                 gl_fmt,
-                GL_UNSIGNED_BYTE,
+                gl_type,
                 ptr,
             );
         }
@@ -1300,10 +1310,12 @@ impl RenderPipeline for GlPipeline {
             None => return DuctResult::ErrorInvalidState,
         };
         if let Some(tex) = self.textures.get(&handle) {
-            let gl_fmt = match tex.format {
-                DuctTextureFormat::Rgba8 => GL_RGBA,
-                DuctTextureFormat::Rgb8 => GL_RGB,
-                DuctTextureFormat::R8 => GL_RED,
+            let (gl_fmt, gl_type) = match tex.format {
+                DuctTextureFormat::Rgba8 => (GL_RGBA, GL_UNSIGNED_BYTE),
+                DuctTextureFormat::Rgb8 => (GL_RGB, GL_UNSIGNED_BYTE),
+                DuctTextureFormat::R8 => (GL_RED, GL_UNSIGNED_BYTE),
+                DuctTextureFormat::Rgba16Float => (GL_RGBA, GL_HALF_FLOAT),
+                DuctTextureFormat::Depth32Float => (GL_DEPTH_COMPONENT, GL_FLOAT),
             };
             unsafe {
                 (gl.BindTexture)(GL_TEXTURE_2D, tex.gl_id);
@@ -1315,7 +1327,7 @@ impl RenderPipeline for GlPipeline {
                     width as i32,
                     height as i32,
                     gl_fmt,
-                    GL_UNSIGNED_BYTE,
+                    gl_type,
                     data.as_ptr() as *const c_void,
                 );
             }
@@ -1435,6 +1447,25 @@ impl RenderPipeline for GlPipeline {
 
         let mut fbo_id = 0u32;
         let mut depth_rbo = 0u32;
+        let mut depth_texture_handle = DuctTextureHandle::INVALID;
+
+        if desc.has_depth {
+            match self.create_texture_2d(desc.width, desc.height, DuctTextureFormat::Depth32Float, None) {
+                Ok(dh) => {
+                    depth_texture_handle = dh;
+                }
+                Err(err) => {
+                    let _ = self.destroy_texture(color_tex_handle);
+                    return Err(err);
+                }
+            }
+        }
+
+        let depth_gl_id = if depth_texture_handle.is_valid() {
+            self.textures.get(&depth_texture_handle).unwrap().gl_id
+        } else {
+            0
+        };
 
         unsafe {
             (gl.GenFramebuffers)(1, &mut fbo_id);
@@ -1447,20 +1478,13 @@ impl RenderPipeline for GlPipeline {
                 0,
             );
 
-            if desc.has_depth {
-                (gl.GenRenderbuffers)(1, &mut depth_rbo);
-                (gl.BindRenderbuffer)(GL_RENDERBUFFER, depth_rbo);
-                (gl.RenderbufferStorage)(
-                    GL_RENDERBUFFER,
-                    GL_DEPTH24_STENCIL8,
-                    desc.width as i32,
-                    desc.height as i32,
-                );
-                (gl.FramebufferRenderbuffer)(
+            if depth_gl_id != 0 {
+                (gl.FramebufferTexture2D)(
                     GL_FRAMEBUFFER,
-                    GL_DEPTH_STENCIL_ATTACHMENT,
-                    GL_RENDERBUFFER,
-                    depth_rbo,
+                    GL_DEPTH_ATTACHMENT,
+                    GL_TEXTURE_2D,
+                    depth_gl_id,
+                    0,
                 );
             }
 
@@ -1469,6 +1493,9 @@ impl RenderPipeline for GlPipeline {
                 eprintln!("[glduct][ERROR] Framebuffer incomplete: 0x{:X}", status);
                 (gl.BindFramebuffer)(GL_FRAMEBUFFER, 0);
                 (gl.DeleteFramebuffers)(1, &mut fbo_id);
+                if depth_texture_handle.is_valid() {
+                    let _ = self.destroy_texture(depth_texture_handle);
+                }
                 if depth_rbo != 0 {
                     (gl.DeleteRenderbuffers)(1, &mut depth_rbo);
                 }
@@ -1496,6 +1523,7 @@ impl RenderPipeline for GlPipeline {
             GlRenderTargetRecord {
                 fbo_id,
                 color_texture_handle: color_tex_handle,
+                depth_texture_handle,
                 depth_rbo,
                 width: desc.width,
                 height: desc.height,
@@ -1526,6 +1554,9 @@ impl RenderPipeline for GlPipeline {
                         (gl.DeleteRenderbuffers)(1, &mut rbo);
                     }
                 }
+            }
+            if rt.depth_texture_handle.is_valid() {
+                let _ = self.destroy_texture(rt.depth_texture_handle);
             }
             let _ = self.destroy_texture(rt.color_texture_handle);
             DuctResult::Success
@@ -1568,6 +1599,21 @@ impl RenderPipeline for GlPipeline {
     ) -> Result<DuctTextureHandle, DuctResult> {
         if let Some(rt) = self.render_targets.get(&handle) {
             Ok(rt.color_texture_handle)
+        } else {
+            Err(DuctResult::ErrorResourceNotFound)
+        }
+    }
+
+    fn get_render_target_depth_texture(
+        &mut self,
+        handle: DuctRenderTargetHandle,
+    ) -> Result<DuctTextureHandle, DuctResult> {
+        if let Some(rt) = self.render_targets.get(&handle) {
+            if rt.depth_texture_handle.is_valid() {
+                Ok(rt.depth_texture_handle)
+            } else {
+                Err(DuctResult::ErrorResourceNotFound)
+            }
         } else {
             Err(DuctResult::ErrorResourceNotFound)
         }

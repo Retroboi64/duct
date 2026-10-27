@@ -67,6 +67,10 @@ pub const GL_RED: u32 = 0x1903;
 pub const GL_RGBA8: u32 = 0x8058;
 pub const GL_RGB8: u32 = 0x8051;
 pub const GL_R8: u32 = 0x8229;
+pub const GL_RGBA16F: u32 = 0x881A;
+pub const GL_DEPTH_COMPONENT: u32 = 0x1902;
+pub const GL_DEPTH_COMPONENT32F: u32 = 0x8CAC;
+pub const GL_HALF_FLOAT: u32 = 0x140B;
 
 pub const GL_TEXTURE_MIN_FILTER: u32 = 0x2801;
 pub const GL_TEXTURE_MAG_FILTER: u32 = 0x2800;

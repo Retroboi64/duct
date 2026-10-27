@@ -57,6 +57,7 @@ pub const D3D_FEATURE_LEVEL_10_0: u32 = 0xa000;
 
 pub const DXGI_FORMAT_R32G32B32A32_FLOAT: u32 = 2;
 pub const DXGI_FORMAT_R32G32B32_FLOAT: u32 = 6;
+pub const DXGI_FORMAT_R16G16B16A16_FLOAT: u32 = 10;
 pub const DXGI_FORMAT_R32G32_FLOAT: u32 = 16;
 pub const DXGI_FORMAT_R8G8B8A8_UNORM: u32 = 28;
 pub const DXGI_FORMAT_R32_FLOAT: u32 = 41;
@@ -1923,6 +1924,8 @@ impl RenderPipeline for Dx11Pipeline {
         let dxgi_fmt = match format {
             DuctTextureFormat::Rgba8 | DuctTextureFormat::Rgb8 => DXGI_FORMAT_R8G8B8A8_UNORM,
             DuctTextureFormat::R8 => DXGI_FORMAT_R8_UNORM,
+            DuctTextureFormat::Rgba16Float => DXGI_FORMAT_R16G16B16A16_FLOAT,
+            DuctTextureFormat::Depth32Float => DXGI_FORMAT_R32_FLOAT,
         };
         let mut tex_ptr: *mut c_void = std::ptr::null_mut();
         let mut srv_ptr: *mut c_void = std::ptr::null_mut();
@@ -1954,7 +1957,11 @@ impl RenderPipeline for Dx11Pipeline {
                     *mut *mut c_void,
                 ) -> HRESULT = std::mem::transmute(*dev_vt.add(5));
 
-                let bpp = if dxgi_fmt == DXGI_FORMAT_R8_UNORM { 1 } else { 4 };
+                let bpp = match dxgi_fmt {
+                    DXGI_FORMAT_R8_UNORM => 1,
+                    DXGI_FORMAT_R16G16B16A16_FLOAT => 8,
+                    _ => 4,
+                };
                 let sub_data = D3D11_SUBRESOURCE_DATA {
                     pSysMem: data.map(|d| d.as_ptr() as *const c_void).unwrap_or(std::ptr::null()),
                     SysMemPitch: width * bpp,
@@ -2048,7 +2055,11 @@ impl RenderPipeline for Dx11Pipeline {
                         u32,
                         u32,
                     ) = std::mem::transmute(*ctx_vt.add(48));
-                    let bpp = if tex.format == DXGI_FORMAT_R8_UNORM { 1 } else { 4 };
+                    let bpp = match tex.format {
+                        DXGI_FORMAT_R8_UNORM => 1,
+                        DXGI_FORMAT_R16G16B16A16_FLOAT => 8,
+                        _ => 4,
+                    };
                     let dst_box = D3D11_BOX {
                         left: x,
                         top: y,

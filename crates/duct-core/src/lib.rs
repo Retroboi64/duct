@@ -339,6 +339,8 @@ pub enum DuctTextureFormat {
     Rgba8 = 1,
     Rgb8 = 2,
     R8 = 3,
+    Rgba16Float = 4,
+    Depth32Float = 5,
 }
 
 /// Opaque texture handle.
@@ -645,6 +647,7 @@ pub struct DuctPipelineVTable {
     pub destroy_render_target: unsafe extern "C" fn(ctx: *mut c_void, handle: DuctRenderTargetHandle) -> DuctResult,
     pub bind_render_target: unsafe extern "C" fn(ctx: *mut c_void, handle: DuctRenderTargetHandle) -> DuctResult,
     pub get_render_target_texture: unsafe extern "C" fn(ctx: *mut c_void, handle: DuctRenderTargetHandle, out_texture: *mut DuctTextureHandle) -> DuctResult,
+    pub get_render_target_depth_texture: unsafe extern "C" fn(ctx: *mut c_void, handle: DuctRenderTargetHandle, out_texture: *mut DuctTextureHandle) -> DuctResult,
     pub blit_render_target: unsafe extern "C" fn(ctx: *mut c_void, src: DuctRenderTargetHandle, dst: DuctRenderTargetHandle, src_w: u32, src_h: u32, dst_w: u32, dst_h: u32, filter: DuctFilterMode) -> DuctResult,
     pub read_pixels: unsafe extern "C" fn(ctx: *mut c_void, x: u32, y: u32, width: u32, height: u32, out_rgba: *mut u8, buf_len: usize) -> DuctResult,
 
@@ -751,6 +754,9 @@ pub trait RenderPipeline: 'static {
         DuctResult::Success
     }
     fn get_render_target_texture(&mut self, _handle: DuctRenderTargetHandle) -> Result<DuctTextureHandle, DuctResult> {
+        Err(DuctResult::ErrorUnsupported)
+    }
+    fn get_render_target_depth_texture(&mut self, _handle: DuctRenderTargetHandle) -> Result<DuctTextureHandle, DuctResult> {
         Err(DuctResult::ErrorUnsupported)
     }
     fn blit_render_target(
@@ -993,6 +999,8 @@ unsafe extern "C" fn vtable_create_texture_2d<T: RenderPipeline>(
         DuctTextureFormat::Rgba8 => 4,
         DuctTextureFormat::Rgb8 => 3,
         DuctTextureFormat::R8 => 1,
+        DuctTextureFormat::Rgba16Float => 8,
+        DuctTextureFormat::Depth32Float => 4,
     };
     let data_slice = if !data.is_null() {
         Some(std::slice::from_raw_parts(data, (width * height * bytes_per_pixel) as usize))
@@ -1107,6 +1115,24 @@ unsafe extern "C" fn vtable_get_render_target_texture<T: RenderPipeline>(
     }
     let wrapper = &mut *(ctx as *mut PipelineWrapper<T>);
     match wrapper.pipeline.get_render_target_texture(handle) {
+        Ok(t) => {
+            *out_texture = t;
+            DuctResult::Success
+        }
+        Err(err) => err,
+    }
+}
+
+unsafe extern "C" fn vtable_get_render_target_depth_texture<T: RenderPipeline>(
+    ctx: *mut c_void,
+    handle: DuctRenderTargetHandle,
+    out_texture: *mut DuctTextureHandle,
+) -> DuctResult {
+    if ctx.is_null() || out_texture.is_null() {
+        return DuctResult::ErrorInvalidParameter;
+    }
+    let wrapper = &mut *(ctx as *mut PipelineWrapper<T>);
+    match wrapper.pipeline.get_render_target_depth_texture(handle) {
         Ok(t) => {
             *out_texture = t;
             DuctResult::Success
@@ -1516,6 +1542,7 @@ pub fn build_vtable_from_pipeline<T: RenderPipeline>(pipeline: T) -> *mut DuctPi
         destroy_render_target: vtable_destroy_render_target::<T>,
         bind_render_target: vtable_bind_render_target::<T>,
         get_render_target_texture: vtable_get_render_target_texture::<T>,
+        get_render_target_depth_texture: vtable_get_render_target_depth_texture::<T>,
         blit_render_target: vtable_blit_render_target::<T>,
         read_pixels: vtable_read_pixels::<T>,
         set_pipeline_state: vtable_set_pipeline_state::<T>,
@@ -1729,6 +1756,10 @@ mod tests {
         // Render target handles
         assert!(!DuctRenderTargetHandle::INVALID.is_valid());
         assert!(DuctRenderTargetHandle(55).is_valid());
+
+        // Texture formats
+        assert_eq!(DuctTextureFormat::Rgba16Float as u32, 4);
+        assert_eq!(DuctTextureFormat::Depth32Float as u32, 5);
 
         // Vertex layout builder
         let layout = DuctVertexLayout::new(32)

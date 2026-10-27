@@ -1010,6 +1010,21 @@ impl Duct {
         }
     }
 
+    /// Retrieves sampleable depth texture handle from an offscreen render target with depth enabled.
+    pub fn get_render_target_depth_texture(
+        &mut self,
+        handle: DuctRenderTargetHandle,
+    ) -> Result<DuctTextureHandle, DuctError> {
+        let mut tex = DuctTextureHandle::INVALID;
+        let v = self.vtable();
+        let res = unsafe { (v.get_render_target_depth_texture)(v.context, handle, &mut tex) };
+        if res.is_ok() {
+            Ok(tex)
+        } else {
+            Err(DuctError::PipelineOperationFailed(res))
+        }
+    }
+
     /// Instanced draw call.
     pub fn draw_instanced(
         &mut self,
@@ -2435,6 +2450,24 @@ pub extern "C" fn duct_get_render_target_texture(
     if handle.is_null() || out_texture.is_null() { return DuctResult::ErrorInvalidParameter; }
     let duct = unsafe { &mut *handle };
     match duct.get_render_target_texture(target) {
+        Ok(t) => {
+            unsafe { *out_texture = t };
+            DuctResult::Success
+        }
+        Err(DuctError::PipelineOperationFailed(r)) => r,
+        Err(_) => DuctResult::ErrorGeneric,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn duct_get_render_target_depth_texture(
+    handle: *mut Duct,
+    target: DuctRenderTargetHandle,
+    out_texture: *mut DuctTextureHandle,
+) -> DuctResult {
+    if handle.is_null() || out_texture.is_null() { return DuctResult::ErrorInvalidParameter; }
+    let duct = unsafe { &mut *handle };
+    match duct.get_render_target_depth_texture(target) {
         Ok(t) => {
             unsafe { *out_texture = t };
             DuctResult::Success

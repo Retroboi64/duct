@@ -293,6 +293,8 @@ fn map_texture_format(fmt: DuctTextureFormat) -> u32 {
         DuctTextureFormat::Rgba8 => VK_FORMAT_R8G8B8A8_UNORM,
         DuctTextureFormat::Rgb8 => VK_FORMAT_R8G8B8A8_UNORM,
         DuctTextureFormat::R8 => VK_FORMAT_R8_UNORM,
+        DuctTextureFormat::Rgba16Float => VK_FORMAT_R16G16B16A16_SFLOAT,
+        DuctTextureFormat::Depth32Float => VK_FORMAT_D32_SFLOAT,
     }
 }
 
