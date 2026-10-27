@@ -357,7 +357,7 @@ impl DuctTextureHandle {
 
 /// Face culling mode.
 #[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum DuctCullMode {
     None = 0,
     Front = 1,
@@ -366,7 +366,7 @@ pub enum DuctCullMode {
 
 /// Blending mode.
 #[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum DuctBlendMode {
     Opaque = 0,
     AlphaBlend = 1,
@@ -503,7 +503,7 @@ pub enum DuctPrimitiveTopology {
 
 /// Depth and stencil comparison operators.
 #[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum DuctCompareOp {
     Always = 0,
     Never = 1,

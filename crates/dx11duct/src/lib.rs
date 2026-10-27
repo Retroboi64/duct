@@ -95,6 +95,60 @@ pub const D3D11_BLEND_INV_SRC_ALPHA: u32 = 6;
 pub const D3D11_BLEND_OP_ADD: u32 = 1;
 pub const D3D11_COLOR_WRITE_ENABLE_ALL: u8 = 0x0F;
 
+pub const D3D11_DEPTH_WRITE_MASK_ZERO: u32 = 0;
+pub const D3D11_DEPTH_WRITE_MASK_ALL: u32 = 1;
+
+pub const D3D11_COMPARISON_NEVER: u32 = 1;
+pub const D3D11_COMPARISON_LESS: u32 = 2;
+pub const D3D11_COMPARISON_EQUAL: u32 = 3;
+pub const D3D11_COMPARISON_LESS_EQUAL: u32 = 4;
+pub const D3D11_COMPARISON_GREATER: u32 = 5;
+pub const D3D11_COMPARISON_NOT_EQUAL: u32 = 6;
+pub const D3D11_COMPARISON_GREATER_EQUAL: u32 = 7;
+pub const D3D11_COMPARISON_ALWAYS: u32 = 8;
+
+pub const D3D11_STENCIL_OP_KEEP: u32 = 1;
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct D3D11_DEPTH_STENCILOP_DESC {
+    pub StencilFailOp: u32,
+    pub StencilDepthFailOp: u32,
+    pub StencilPassOp: u32,
+    pub StencilFunc: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct D3D11_DEPTH_STENCIL_DESC {
+    pub DepthEnable: i32,
+    pub DepthWriteMask: u32,
+    pub DepthFunc: u32,
+    pub StencilEnable: i32,
+    pub StencilReadMask: u8,
+    pub StencilWriteMask: u8,
+    pub FrontFace: D3D11_DEPTH_STENCILOP_DESC,
+    pub BackFace: D3D11_DEPTH_STENCILOP_DESC,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct Dx11RasterizerKey {
+    cull_mode: DuctCullMode,
+    wireframe: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct Dx11BlendKey {
+    blend_mode: DuctBlendMode,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct Dx11DepthStencilKey {
+    depth_test: bool,
+    depth_write: bool,
+    depth_compare: DuctCompareOp,
+}
+
 pub const D3D11_FILTER_MIN_MAG_MIP_POINT: u32 = 0;
 pub const D3D11_FILTER_MIN_MAG_MIP_LINEAR: u32 = 0x15;
 pub const D3D11_TEXTURE_ADDRESS_WRAP: u32 = 1;
@@ -677,6 +731,10 @@ pub struct Dx11Pipeline {
     buffers: HashMap<DuctBufferHandle, Dx11BufferRecord>,
     textures: HashMap<DuctTextureHandle, Dx11TextureRecord>,
     render_targets: HashMap<DuctRenderTargetHandle, Dx11RenderTargetRecord>,
+
+    cached_rasterizer_states: HashMap<Dx11RasterizerKey, *mut c_void>,
+    cached_blend_states: HashMap<Dx11BlendKey, *mut c_void>,
+    cached_depth_stencil_states: HashMap<Dx11DepthStencilKey, *mut c_void>,
 }
 
 impl Default for Dx11Pipeline {
@@ -727,6 +785,9 @@ impl Default for Dx11Pipeline {
             buffers: HashMap::new(),
             textures: HashMap::new(),
             render_targets: HashMap::new(),
+            cached_rasterizer_states: HashMap::new(),
+            cached_blend_states: HashMap::new(),
+            cached_depth_stencil_states: HashMap::new(),
         }
     }
 }
@@ -1313,6 +1374,15 @@ impl RenderPipeline for Dx11Pipeline {
                 com_release(t.sampler);
                 com_release(t.srv);
                 com_release(t.texture);
+            }
+            for (_, rs) in self.cached_rasterizer_states.drain() {
+                com_release(rs);
+            }
+            for (_, bs) in self.cached_blend_states.drain() {
+                com_release(bs);
+            }
+            for (_, ds) in self.cached_depth_stencil_states.drain() {
+                com_release(ds);
             }
             com_release(self.constant_buffer);
             self.constant_buffer = std::ptr::null_mut();
@@ -2372,86 +2442,112 @@ impl RenderPipeline for Dx11Pipeline {
                 let dev_vt = com_vtable(self.device);
                 let ctx_vt = com_vtable(self.context);
 
-                // Configure Rasterizer State
-                let cull_mode = match desc.cull_mode {
-                    DuctCullMode::None => D3D11_CULL_NONE,
-                    DuctCullMode::Front => D3D11_CULL_FRONT,
-                    DuctCullMode::Back => D3D11_CULL_BACK,
+                // 1. Configure / Bind Cached Rasterizer State
+                let rs_key = Dx11RasterizerKey {
+                    cull_mode: desc.cull_mode,
+                    wireframe: self.wireframe,
                 };
-                let rast_desc = D3D11_RASTERIZER_DESC {
-                    FillMode: if self.wireframe {
-                        D3D11_FILL_WIREFRAME
+                let rs = if let Some(&cached) = self.cached_rasterizer_states.get(&rs_key) {
+                    cached
+                } else {
+                    let cull_mode = match desc.cull_mode {
+                        DuctCullMode::None => D3D11_CULL_NONE,
+                        DuctCullMode::Front => D3D11_CULL_FRONT,
+                        DuctCullMode::Back => D3D11_CULL_BACK,
+                    };
+                    let rast_desc = D3D11_RASTERIZER_DESC {
+                        FillMode: if self.wireframe {
+                            D3D11_FILL_WIREFRAME
+                        } else {
+                            D3D11_FILL_SOLID
+                        },
+                        CullMode: cull_mode,
+                        FrontCounterClockwise: 1,
+                        DepthBias: 0,
+                        DepthBiasClamp: 0.0,
+                        SlopeScaledDepthBias: 0.0,
+                        DepthClipEnable: 1,
+                        ScissorEnable: 1,
+                        MultisampleEnable: 0,
+                        AntialiasedLineEnable: 0,
+                    };
+                    let create_rs: unsafe extern "system" fn(
+                        *mut c_void,
+                        *const D3D11_RASTERIZER_DESC,
+                        *mut *mut c_void,
+                    ) -> HRESULT = std::mem::transmute(*dev_vt.add(22));
+                    let mut new_rs: *mut c_void = std::ptr::null_mut();
+                    if create_rs(self.device, &rast_desc, &mut new_rs) == S_OK && !new_rs.is_null() {
+                        self.cached_rasterizer_states.insert(rs_key, new_rs);
+                        new_rs
                     } else {
-                        D3D11_FILL_SOLID
-                    },
-                    CullMode: cull_mode,
-                    FrontCounterClockwise: 1,
-                    DepthBias: 0,
-                    DepthBiasClamp: 0.0,
-                    SlopeScaledDepthBias: 0.0,
-                    DepthClipEnable: 1,
-                    ScissorEnable: 1,
-                    MultisampleEnable: 0,
-                    AntialiasedLineEnable: 0,
+                        std::ptr::null_mut()
+                    }
                 };
-                let create_rs: unsafe extern "system" fn(
-                    *mut c_void,
-                    *const D3D11_RASTERIZER_DESC,
-                    *mut *mut c_void,
-                ) -> HRESULT = std::mem::transmute(*dev_vt.add(22));
-                let mut rs: *mut c_void = std::ptr::null_mut();
-                if create_rs(self.device, &rast_desc, &mut rs) == S_OK && !rs.is_null() {
+                if !rs.is_null() {
                     let rs_set: unsafe extern "system" fn(*mut c_void, *mut c_void) =
                         std::mem::transmute(*ctx_vt.add(43));
                     rs_set(self.context, rs);
-                    com_release(rs);
                 }
 
-                // Configure Blend State
-                let rt_blend = match desc.blend_mode {
-                    DuctBlendMode::Opaque => D3D11_RENDER_TARGET_BLEND_DESC {
-                        BlendEnable: 0,
-                        SrcBlend: D3D11_BLEND_ONE,
-                        DestBlend: D3D11_BLEND_ZERO,
-                        BlendOp: D3D11_BLEND_OP_ADD,
-                        SrcBlendAlpha: D3D11_BLEND_ONE,
-                        DestBlendAlpha: D3D11_BLEND_ZERO,
-                        BlendOpAlpha: D3D11_BLEND_OP_ADD,
-                        RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL,
-                    },
-                    DuctBlendMode::AlphaBlend => D3D11_RENDER_TARGET_BLEND_DESC {
-                        BlendEnable: 1,
-                        SrcBlend: D3D11_BLEND_SRC_ALPHA,
-                        DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
-                        BlendOp: D3D11_BLEND_OP_ADD,
-                        SrcBlendAlpha: D3D11_BLEND_ONE,
-                        DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA,
-                        BlendOpAlpha: D3D11_BLEND_OP_ADD,
-                        RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL,
-                    },
-                    DuctBlendMode::Additive => D3D11_RENDER_TARGET_BLEND_DESC {
-                        BlendEnable: 1,
-                        SrcBlend: D3D11_BLEND_SRC_ALPHA,
-                        DestBlend: D3D11_BLEND_ONE,
-                        BlendOp: D3D11_BLEND_OP_ADD,
-                        SrcBlendAlpha: D3D11_BLEND_ONE,
-                        DestBlendAlpha: D3D11_BLEND_ONE,
-                        BlendOpAlpha: D3D11_BLEND_OP_ADD,
-                        RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL,
-                    },
+                // 2. Configure / Bind Cached Blend State
+                let bs_key = Dx11BlendKey {
+                    blend_mode: desc.blend_mode,
                 };
-                let blend_desc = D3D11_BLEND_DESC {
-                    AlphaToCoverageEnable: 0,
-                    IndependentBlendEnable: 0,
-                    RenderTarget: [rt_blend; 8],
+                let bs = if let Some(&cached) = self.cached_blend_states.get(&bs_key) {
+                    cached
+                } else {
+                    let rt_blend = match desc.blend_mode {
+                        DuctBlendMode::Opaque => D3D11_RENDER_TARGET_BLEND_DESC {
+                            BlendEnable: 0,
+                            SrcBlend: D3D11_BLEND_ONE,
+                            DestBlend: D3D11_BLEND_ZERO,
+                            BlendOp: D3D11_BLEND_OP_ADD,
+                            SrcBlendAlpha: D3D11_BLEND_ONE,
+                            DestBlendAlpha: D3D11_BLEND_ZERO,
+                            BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                            RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL,
+                        },
+                        DuctBlendMode::AlphaBlend => D3D11_RENDER_TARGET_BLEND_DESC {
+                            BlendEnable: 1,
+                            SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                            DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
+                            BlendOp: D3D11_BLEND_OP_ADD,
+                            SrcBlendAlpha: D3D11_BLEND_ONE,
+                            DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA,
+                            BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                            RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL,
+                        },
+                        DuctBlendMode::Additive => D3D11_RENDER_TARGET_BLEND_DESC {
+                            BlendEnable: 1,
+                            SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                            DestBlend: D3D11_BLEND_ONE,
+                            BlendOp: D3D11_BLEND_OP_ADD,
+                            SrcBlendAlpha: D3D11_BLEND_ONE,
+                            DestBlendAlpha: D3D11_BLEND_ONE,
+                            BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                            RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL,
+                        },
+                    };
+                    let blend_desc = D3D11_BLEND_DESC {
+                        AlphaToCoverageEnable: 0,
+                        IndependentBlendEnable: 0,
+                        RenderTarget: [rt_blend; 8],
+                    };
+                    let create_bs: unsafe extern "system" fn(
+                        *mut c_void,
+                        *const D3D11_BLEND_DESC,
+                        *mut *mut c_void,
+                    ) -> HRESULT = std::mem::transmute(*dev_vt.add(20));
+                    let mut new_bs: *mut c_void = std::ptr::null_mut();
+                    if create_bs(self.device, &blend_desc, &mut new_bs) == S_OK && !new_bs.is_null() {
+                        self.cached_blend_states.insert(bs_key, new_bs);
+                        new_bs
+                    } else {
+                        std::ptr::null_mut()
+                    }
                 };
-                let create_bs: unsafe extern "system" fn(
-                    *mut c_void,
-                    *const D3D11_BLEND_DESC,
-                    *mut *mut c_void,
-                ) -> HRESULT = std::mem::transmute(*dev_vt.add(20));
-                let mut bs: *mut c_void = std::ptr::null_mut();
-                if create_bs(self.device, &blend_desc, &mut bs) == S_OK && !bs.is_null() {
+                if !bs.is_null() {
                     let om_set_bs: unsafe extern "system" fn(
                         *mut c_void,
                         *mut c_void,
@@ -2460,7 +2556,58 @@ impl RenderPipeline for Dx11Pipeline {
                     ) = std::mem::transmute(*ctx_vt.add(35));
                     let factor = [0.0f32; 4];
                     om_set_bs(self.context, bs, &factor, 0xffff_ffff);
-                    com_release(bs);
+                }
+
+                // 3. Configure / Bind Cached Depth-Stencil State
+                let ds_key = Dx11DepthStencilKey {
+                    depth_test: desc.depth_test,
+                    depth_write: desc.depth_write,
+                    depth_compare: desc.depth_compare,
+                };
+                let ds = if let Some(&cached) = self.cached_depth_stencil_states.get(&ds_key) {
+                    cached
+                } else {
+                    let depth_func = match desc.depth_compare {
+                        DuctCompareOp::Never => D3D11_COMPARISON_NEVER,
+                        DuctCompareOp::Less => D3D11_COMPARISON_LESS,
+                        DuctCompareOp::Equal => D3D11_COMPARISON_EQUAL,
+                        DuctCompareOp::LessEqual => D3D11_COMPARISON_LESS_EQUAL,
+                        DuctCompareOp::Greater => D3D11_COMPARISON_GREATER,
+                        DuctCompareOp::NotEqual => D3D11_COMPARISON_NOT_EQUAL,
+                        DuctCompareOp::GreaterEqual => D3D11_COMPARISON_GREATER_EQUAL,
+                        DuctCompareOp::Always => D3D11_COMPARISON_ALWAYS,
+                    };
+                    let depth_desc = D3D11_DEPTH_STENCIL_DESC {
+                        DepthEnable: if desc.depth_test { 1 } else { 0 },
+                        DepthWriteMask: if desc.depth_write {
+                            D3D11_DEPTH_WRITE_MASK_ALL
+                        } else {
+                            D3D11_DEPTH_WRITE_MASK_ZERO
+                        },
+                        DepthFunc: depth_func,
+                        StencilEnable: 0,
+                        StencilReadMask: 0xff,
+                        StencilWriteMask: 0xff,
+                        FrontFace: D3D11_DEPTH_STENCILOP_DESC::default(),
+                        BackFace: D3D11_DEPTH_STENCILOP_DESC::default(),
+                    };
+                    let create_ds: unsafe extern "system" fn(
+                        *mut c_void,
+                        *const D3D11_DEPTH_STENCIL_DESC,
+                        *mut *mut c_void,
+                    ) -> HRESULT = std::mem::transmute(*dev_vt.add(21));
+                    let mut new_ds: *mut c_void = std::ptr::null_mut();
+                    if create_ds(self.device, &depth_desc, &mut new_ds) == S_OK && !new_ds.is_null() {
+                        self.cached_depth_stencil_states.insert(ds_key, new_ds);
+                        new_ds
+                    } else {
+                        std::ptr::null_mut()
+                    }
+                };
+                if !ds.is_null() {
+                    let om_set_ds: unsafe extern "system" fn(*mut c_void, *mut c_void, u32) =
+                        std::mem::transmute(*ctx_vt.add(36));
+                    om_set_ds(self.context, ds, 0);
                 }
             }
         }
