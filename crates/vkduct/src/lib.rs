@@ -2465,8 +2465,8 @@ impl RenderPipeline for VkPipeline {
                         if (dfns.MapMemory)(
                             self.device,
                             rec.memory,
-                            offset as VkDeviceSize,
-                            data.len() as VkDeviceSize,
+                            0,
+                            rec.size_bytes as VkDeviceSize,
                             0,
                             &mut mapped,
                         ) == VK_SUCCESS
@@ -2474,7 +2474,7 @@ impl RenderPipeline for VkPipeline {
                         {
                             std::ptr::copy_nonoverlapping(
                                 data.as_ptr(),
-                                mapped as *mut u8,
+                                (mapped as *mut u8).add(offset),
                                 data.len(),
                             );
                             (dfns.UnmapMemory)(self.device, rec.memory);
