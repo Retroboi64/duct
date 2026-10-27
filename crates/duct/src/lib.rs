@@ -603,6 +603,12 @@ impl Duct {
         self.backend_type
     }
 
+    /// Returns the NDC clip space convention of the active backend.
+    #[inline]
+    pub fn clip_space(&self) -> DuctClipSpace {
+        self.backend_type.clip_space()
+    }
+
     #[inline]
     pub fn backend_name(&self) -> &str {
         &self.backend_name

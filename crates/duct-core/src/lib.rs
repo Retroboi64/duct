@@ -85,6 +85,39 @@ impl fmt::Display for DuctBackendType {
     }
 }
 
+/// Normalized Device Coordinate (NDC) clip space convention used by a graphics backend.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum DuctClipSpace {
+    /// OpenGL convention: Depth is mapped to [-1, 1], Y points up.
+    OpenGL = 1,
+    /// Direct3D convention: Depth is mapped to [0, 1], Y points up.
+    Direct3D = 2,
+    /// Vulkan convention: Depth is mapped to [0, 1], Y points down in framebuffer space (or compensated via negative viewport).
+    Vulkan = 3,
+}
+
+impl DuctClipSpace {
+    /// Returns true if the depth range is [0, 1] (Direct3D and Vulkan).
+    #[inline]
+    pub fn is_zero_to_one(self) -> bool {
+        matches!(self, DuctClipSpace::Direct3D | DuctClipSpace::Vulkan)
+    }
+}
+
+impl DuctBackendType {
+    /// Returns the NDC clip space convention for this backend type.
+    #[inline]
+    pub fn clip_space(self) -> DuctClipSpace {
+        match self {
+            DuctBackendType::OpenGL => DuctClipSpace::OpenGL,
+            DuctBackendType::DirectX11 | DuctBackendType::DirectX12 => DuctClipSpace::Direct3D,
+            DuctBackendType::Vulkan => DuctClipSpace::Vulkan,
+            _ => DuctClipSpace::OpenGL,
+        }
+    }
+}
+
 /// RGBA floating-point color.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -657,6 +690,11 @@ pub trait RenderPipeline: 'static {
     fn backend_type(&self) -> DuctBackendType;
     fn name(&self) -> &str;
     fn version(&self) -> &str;
+
+    /// Returns the NDC clip space convention of this pipeline backend.
+    fn clip_space(&self) -> DuctClipSpace {
+        self.backend_type().clip_space()
+    }
 
     fn init(&mut self, config: &DuctInitConfig) -> DuctResult;
     fn shutdown(&mut self) -> DuctResult;

@@ -454,15 +454,12 @@ pub fn build_vertex_shader_spv(has_vertex_color: bool) -> Vec<u32> {
     let ry = b.alloc_id();
     SpvBuilder::push_op(&mut b.functions, OP_FADD, &[t_float, ry, sy, off_y]);
 
-    // Flip Y so +Y is UP in Vulkan clip space (matching OpenGL convention)
-    let neg_ry = b.alloc_id();
-    SpvBuilder::push_op(&mut b.functions, OP_FNEGATE, &[t_float, neg_ry, ry]);
-
+    // +Y is preserved in clip space; Y flip is handled cleanly by negative viewport height in hardware rasterizer
     let final_pos = b.alloc_id();
     SpvBuilder::push_op(
         &mut b.functions,
         OP_COMPOSITE_CONSTRUCT,
-        &[t_vec4, final_pos, rx, neg_ry, tz, tw],
+        &[t_vec4, final_pos, rx, ry, tz, tw],
     );
 
     let gl_pos_ptr = b.alloc_id();

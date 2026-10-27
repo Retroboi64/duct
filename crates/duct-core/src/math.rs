@@ -257,8 +257,8 @@ impl Mat4 {
         }
     }
 
-    /// Creates a standard perspective projection matrix (compatible with OpenGL, DirectX, and Vulkan NDC).
-    pub fn perspective(fov_y_rad: f32, aspect: f32, z_near: f32, z_far: f32) -> Self {
+    /// Creates an OpenGL perspective projection matrix mapping depth to [-1, 1].
+    pub fn perspective_gl(fov_y_rad: f32, aspect: f32, z_near: f32, z_far: f32) -> Self {
         let tan_half_fov = (fov_y_rad * 0.5).tan();
         let m00 = 1.0 / (aspect * tan_half_fov);
         let m11 = 1.0 / tan_half_fov;
@@ -274,6 +274,51 @@ impl Mat4 {
                 [0.0, 0.0, m32, 0.0],
             ],
         }
+    }
+
+    /// Creates a Direct3D / Vulkan perspective projection matrix mapping depth to [0, 1].
+    pub fn perspective_d3d_vk(fov_y_rad: f32, aspect: f32, z_near: f32, z_far: f32) -> Self {
+        let tan_half_fov = (fov_y_rad * 0.5).tan();
+        let m00 = 1.0 / (aspect * tan_half_fov);
+        let m11 = 1.0 / tan_half_fov;
+        let m22 = -z_far / (z_far - z_near);
+        let m23 = -1.0;
+        let m32 = -(z_far * z_near) / (z_far - z_near);
+
+        Self {
+            cols: [
+                [m00, 0.0, 0.0, 0.0],
+                [0.0, m11, 0.0, 0.0],
+                [0.0, 0.0, m22, m23],
+                [0.0, 0.0, m32, 0.0],
+            ],
+        }
+    }
+
+    /// Creates a reverse-Z perspective projection matrix mapping near plane to 1.0 and far to 0.0.
+    /// Provides maximum floating-point depth buffer precision and minimizes Z-fighting.
+    pub fn perspective_reverse_z(fov_y_rad: f32, aspect: f32, z_near: f32, z_far: f32) -> Self {
+        let tan_half_fov = (fov_y_rad * 0.5).tan();
+        let m00 = 1.0 / (aspect * tan_half_fov);
+        let m11 = 1.0 / tan_half_fov;
+        let m22 = z_near / (z_far - z_near);
+        let m23 = -1.0;
+        let m32 = (z_far * z_near) / (z_far - z_near);
+
+        Self {
+            cols: [
+                [m00, 0.0, 0.0, 0.0],
+                [0.0, m11, 0.0, 0.0],
+                [0.0, 0.0, m22, m23],
+                [0.0, 0.0, m32, 0.0],
+            ],
+        }
+    }
+
+    /// Creates a standard perspective projection matrix (compatible with OpenGL NDC [-1, 1]).
+    #[inline]
+    pub fn perspective(fov_y_rad: f32, aspect: f32, z_near: f32, z_far: f32) -> Self {
+        Self::perspective_gl(fov_y_rad, aspect, z_near, z_far)
     }
 
     /// Creates an orthographic projection matrix.
@@ -358,5 +403,34 @@ mod tests {
         assert_eq!(arr[10], 1.0);
         assert_eq!(arr[15], 1.0);
         assert_eq!(arr[1], 0.0);
+    }
+
+    #[test]
+    fn test_perspective_projections() {
+        let gl = Mat4::perspective_gl(1.0, 1.0, 0.1, 100.0);
+        let d3d = Mat4::perspective_d3d_vk(1.0, 1.0, 0.1, 100.0);
+        let rev = Mat4::perspective_reverse_z(1.0, 1.0, 0.1, 100.0);
+
+        // Near plane test: point at (0, 0, -0.1, 1.0)
+        let gl_near_z = gl.cols[2][2] * (-0.1) + gl.cols[3][2];
+        let gl_near_w = -1.0 * (-0.1);
+        assert!((gl_near_z / gl_near_w - (-1.0)).abs() < 1e-4);
+
+        let d3d_near_z = d3d.cols[2][2] * (-0.1) + d3d.cols[3][2];
+        let d3d_near_w = -1.0 * (-0.1);
+        assert!((d3d_near_z / d3d_near_w - 0.0).abs() < 1e-4);
+
+        let rev_near_z = rev.cols[2][2] * (-0.1) + rev.cols[3][2];
+        let rev_near_w = -1.0 * (-0.1);
+        assert!((rev_near_z / rev_near_w - 1.0).abs() < 1e-4);
+
+        // Far plane test: point at (0, 0, -100.0, 1.0)
+        let d3d_far_z = d3d.cols[2][2] * (-100.0) + d3d.cols[3][2];
+        let d3d_far_w = -1.0 * (-100.0);
+        assert!((d3d_far_z / d3d_far_w - 1.0).abs() < 1e-4);
+
+        let rev_far_z = rev.cols[2][2] * (-100.0) + rev.cols[3][2];
+        let rev_far_w = -1.0 * (-100.0);
+        assert!((rev_far_z / rev_far_w - 0.0).abs() < 1e-4);
     }
 }

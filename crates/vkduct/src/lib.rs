@@ -984,8 +984,8 @@ impl VkPipeline {
             rasterizerDiscardEnable: VK_FALSE,
             polygonMode: VK_POLYGON_MODE_FILL,
             cullMode: cull_mode,
-            // Because Y is negated in our SPIR-V vertex shader to match OpenGL +Y up,
-            // counter-clockwise vertices in OpenGL become clockwise in Vulkan framebuffer space.
+            // With negative viewport height (y = h, height = -h), +Y is up, and CCW triangles
+            // in world/clip space are rasterized as clockwise in framebuffer space.
             frontFace: VK_FRONT_FACE_CLOCKWISE,
             depthBiasEnable: VK_FALSE,
             depthBiasConstantFactor: 0.0,
@@ -1838,9 +1838,9 @@ impl RenderPipeline for VkPipeline {
             if let Some(dfns) = &self.device_fns {
                 let vp = VkViewport {
                     x: 0.0,
-                    y: 0.0,
+                    y: self.viewport_height as f32,
                     width: self.viewport_width as f32,
-                    height: self.viewport_height as f32,
+                    height: -(self.viewport_height as f32),
                     minDepth: 0.0,
                     maxDepth: 1.0,
                 };
@@ -1977,9 +1977,9 @@ impl RenderPipeline for VkPipeline {
 
                         let vp = VkViewport {
                             x: 0.0,
-                            y: 0.0,
+                            y: target_extent.height as f32,
                             width: target_extent.width as f32,
-                            height: target_extent.height as f32,
+                            height: -(target_extent.height as f32),
                             minDepth: 0.0,
                             maxDepth: 1.0,
                         };
@@ -3275,9 +3275,9 @@ impl RenderPipeline for VkPipeline {
                     if target_rp != VK_NULL_HANDLE && target_fb != VK_NULL_HANDLE {
                         let vp = VkViewport {
                             x: 0.0,
-                            y: 0.0,
+                            y: target_extent.height as f32,
                             width: target_extent.width as f32,
-                            height: target_extent.height as f32,
+                            height: -(target_extent.height as f32),
                             minDepth: 0.0,
                             maxDepth: 1.0,
                         };
