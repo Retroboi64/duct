@@ -17,3 +17,4 @@ name = "duct_core"
 
 [dependencies]
 naga = { version = "24", default-features = false, features = ["glsl-in", "spv-out", "hlsl-out"] }
+numix = { workspace = true }

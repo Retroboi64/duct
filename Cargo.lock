@@ -62,6 +62,7 @@ name = "duct-graphics-core"
 version = "0.1.0"
 dependencies = [
  "naga",
+ "numix",
 ]
 
 [[package]]
@@ -148,6 +149,10 @@ dependencies = [
  "termcolor",
  "thiserror",
 ]
+
+[[package]]
+name = "numix"
+version = "0.1.6"
 
 [[package]]
 name = "pp-rs"

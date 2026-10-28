@@ -29,6 +29,7 @@ vkduct = { path = "crates/vkduct", version = "0.1.0" }
 dx11duct = { path = "crates/dx11duct", version = "0.1.0" }
 dx12duct = { path = "crates/dx12duct", version = "0.1.0" }
 windowed = { path = "../windowed", version = "0.4.0" }
+numix = { path = "../numix", version = "0.1.6" }
 
 [package]
 name = "duct-workspace"
