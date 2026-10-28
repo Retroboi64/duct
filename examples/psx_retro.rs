@@ -5,11 +5,12 @@
 //! - Vertex snapping/jitter (emulating lack of floating-point subpixel precision)
 //! - Affine texture warping simulation (lack of perspective-correct division)
 //! - Per-vertex Gouraud lighting and distance fog
+//! - Indexed 3D Cube geometry with distinct colored faces
 //! - Live backend hot-switching (`B` key) across OpenGL, Vulkan, DX11, and DX12
 
 use duct::{
     BackendPreference, Duct, DuctBlendMode, DuctBufferType, DuctColor, DuctCompareOp,
-    DuctCullMode, DuctFilterMode, DuctPipelineStateDesc, DuctRenderTargetDesc,
+    DuctCullMode, DuctFilterMode, DuctIndexFormat, DuctPipelineStateDesc, DuctRenderTargetDesc,
     DuctShaderStage, DuctTextureFormat, DuctVertexFormat, DuctVertexLayout, Mat4, Vec3,
 };
 use windowed::{ControlFlow, Event, Key, Window, WindowConfig};
@@ -21,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("============================================================");
 
     let mut window = Window::new(
-        WindowConfig::new("Project32 Duct — PSX Retro Graphics")
+        WindowConfig::new("Project32 Duct — PSX Retro 3D Cube")
             .size(1280, 720)
             .resizable(true),
     )?;
@@ -42,7 +43,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         layout (location = 2) in vec2 aUv;
 
         uniform mat4 uMVP;
-        uniform mat4 uModel;
 
         out vec3 vColor;
         out vec2 vUv;
@@ -89,49 +89,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vs = duct.create_shader(DuctShaderStage::Vertex, vs_source, Some("main"))?;
     let fs = duct.create_shader(DuctShaderStage::Fragment, fs_source, Some("main"))?;
 
-    // ── 2. Geometry: Low-poly Gemstone / Octahedron + Ground Plane ────────
+    // ── 2. Geometry: 3D Cube Geometry (24 vertices: pos(3), color(3), uv(2))
     #[rustfmt::skip]
     let vertices: [f32; 192] = [
-        // Octahedron (Gemstone) 8 triangles (pos(3), color(3), uv(2))
-        // Top pyramid
-         0.0,  1.2,  0.0,   1.0, 0.9, 0.3,   0.5, 1.0,
-        -0.8,  0.0,  0.8,   0.9, 0.4, 0.2,   0.0, 0.0,
-         0.8,  0.0,  0.8,   0.9, 0.4, 0.2,   1.0, 0.0,
+        // Front face (Red)
+        -1.0, -1.0,  1.0,   1.0, 0.2, 0.2,   0.0, 0.0,
+         1.0, -1.0,  1.0,   1.0, 0.2, 0.2,   1.0, 0.0,
+         1.0,  1.0,  1.0,   1.0, 0.2, 0.2,   1.0, 1.0,
+        -1.0,  1.0,  1.0,   1.0, 0.2, 0.2,   0.0, 1.0,
 
-         0.0,  1.2,  0.0,   1.0, 0.9, 0.3,   0.5, 1.0,
-         0.8,  0.0,  0.8,   0.8, 0.3, 0.6,   0.0, 0.0,
-         0.8,  0.0, -0.8,   0.8, 0.3, 0.6,   1.0, 0.0,
+        // Back face (Green)
+         1.0, -1.0, -1.0,   0.2, 1.0, 0.3,   0.0, 0.0,
+        -1.0, -1.0, -1.0,   0.2, 1.0, 0.3,   1.0, 0.0,
+        -1.0,  1.0, -1.0,   0.2, 1.0, 0.3,   1.0, 1.0,
+         1.0,  1.0, -1.0,   0.2, 1.0, 0.3,   0.0, 1.0,
 
-         0.0,  1.2,  0.0,   1.0, 0.9, 0.3,   0.5, 1.0,
-         0.8,  0.0, -0.8,   0.3, 0.6, 0.9,   0.0, 0.0,
-        -0.8,  0.0, -0.8,   0.3, 0.6, 0.9,   1.0, 0.0,
+        // Top face (Blue)
+        -1.0,  1.0,  1.0,   0.2, 0.5, 1.0,   0.0, 0.0,
+         1.0,  1.0,  1.0,   0.2, 0.5, 1.0,   1.0, 0.0,
+         1.0,  1.0, -1.0,   0.2, 0.5, 1.0,   1.0, 1.0,
+        -1.0,  1.0, -1.0,   0.2, 0.5, 1.0,   0.0, 1.0,
 
-         0.0,  1.2,  0.0,   1.0, 0.9, 0.3,   0.5, 1.0,
-        -0.8,  0.0, -0.8,   0.2, 0.8, 0.4,   0.0, 0.0,
-        -0.8,  0.0,  0.8,   0.2, 0.8, 0.4,   1.0, 0.0,
+        // Bottom face (Yellow)
+        -1.0, -1.0, -1.0,   1.0, 0.9, 0.2,   0.0, 0.0,
+         1.0, -1.0, -1.0,   1.0, 0.9, 0.2,   1.0, 0.0,
+         1.0, -1.0,  1.0,   1.0, 0.9, 0.2,   1.0, 1.0,
+        -1.0, -1.0,  1.0,   1.0, 0.9, 0.2,   0.0, 1.0,
 
-        // Bottom pyramid
-         0.0, -1.2,  0.0,   0.5, 0.1, 0.8,   0.5, 1.0,
-         0.8,  0.0,  0.8,   0.9, 0.4, 0.2,   0.0, 0.0,
-        -0.8,  0.0,  0.8,   0.9, 0.4, 0.2,   1.0, 0.0,
+        // Right face (Magenta)
+         1.0, -1.0,  1.0,   0.9, 0.3, 0.9,   0.0, 0.0,
+         1.0, -1.0, -1.0,   0.9, 0.3, 0.9,   1.0, 0.0,
+         1.0,  1.0, -1.0,   0.9, 0.3, 0.9,   1.0, 1.0,
+         1.0,  1.0,  1.0,   0.9, 0.3, 0.9,   0.0, 1.0,
 
-         0.0, -1.2,  0.0,   0.5, 0.1, 0.8,   0.5, 1.0,
-         0.8,  0.0, -0.8,   0.8, 0.3, 0.6,   0.0, 0.0,
-         0.8,  0.0,  0.8,   0.8, 0.3, 0.6,   1.0, 0.0,
+        // Left face (Cyan)
+        -1.0, -1.0, -1.0,   0.1, 0.9, 0.9,   0.0, 0.0,
+        -1.0, -1.0,  1.0,   0.1, 0.9, 0.9,   1.0, 0.0,
+        -1.0,  1.0,  1.0,   0.1, 0.9, 0.9,   1.0, 1.0,
+        -1.0,  1.0, -1.0,   0.1, 0.9, 0.9,   0.0, 1.0,
+    ];
 
-         0.0, -1.2,  0.0,   0.5, 0.1, 0.8,   0.5, 1.0,
-        -0.8,  0.0, -0.8,   0.3, 0.6, 0.9,   0.0, 0.0,
-         0.8,  0.0, -0.8,   0.3, 0.6, 0.9,   1.0, 0.0,
-
-         0.0, -1.2,  0.0,   0.5, 0.1, 0.8,   0.5, 1.0,
-        -0.8,  0.0,  0.8,   0.2, 0.8, 0.4,   0.0, 0.0,
-        -0.8,  0.0, -0.8,   0.2, 0.8, 0.4,   1.0, 0.0,
+    #[rustfmt::skip]
+    let indices: [u16; 36] = [
+         0,  1,  2,   0,  2,  3, // Front
+         4,  5,  6,   4,  6,  7, // Back
+         8,  9, 10,   8, 10, 11, // Top
+        12, 13, 14,  12, 14, 15, // Bottom
+        16, 17, 18,  16, 18, 19, // Right
+        20, 21, 22,  20, 22, 23, // Left
     ];
 
     let vbo_bytes = unsafe {
         std::slice::from_raw_parts(vertices.as_ptr() as *const u8, std::mem::size_of_val(&vertices))
     };
     let vbo = duct.create_buffer(DuctBufferType::Vertex, vbo_bytes.len(), Some(vbo_bytes), false)?;
+
+    let ibo_bytes = unsafe {
+        std::slice::from_raw_parts(indices.as_ptr() as *const u8, std::mem::size_of_val(&indices))
+    };
+    let ibo = duct.create_buffer(DuctBufferType::Index, ibo_bytes.len(), Some(ibo_bytes), false)?;
 
     // ── 3. Pipeline State with Depth Test ─────────────────────────────────
     let vertex_layout = DuctVertexLayout::new(32)
@@ -143,7 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vertex_shader: vs,
         fragment_shader: fs,
         vertex_layout,
-        cull_mode: DuctCullMode::None,
+        cull_mode: DuctCullMode::Back,
         blend_mode: DuctBlendMode::Opaque,
         depth_test: true,
         depth_write: true,
@@ -182,6 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = duct.destroy_render_target(fbo);
                 }
                 let _ = duct.destroy_buffer(vbo);
+                let _ = duct.destroy_buffer(ibo);
                 let _ = duct.destroy_shader(vs);
                 let _ = duct.destroy_shader(fs);
                 return ControlFlow::Exit;
@@ -207,7 +224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::RedrawRequested => {
                 frame_count += 1;
-                let t = (frame_count as f32) * 0.03;
+                let t = (frame_count as f32) * 0.02;
 
                 // Bind low-res retro FBO if available
                 if let Some(fbo) = retro_fbo {
@@ -220,27 +237,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Camera & Model Matrices
                 let aspect = (RETRO_W as f32) / (RETRO_H as f32);
-                let proj = Mat4::perspective(50.0f32.to_radians(), aspect, 0.1, 50.0);
+                let proj = Mat4::perspective(45.0f32.to_radians(), aspect, 0.1, 50.0);
                 let view = Mat4::look_at(
-                    Vec3::new(2.8 * t.sin(), 1.6 + 0.4 * t.cos(), 2.8 * t.cos()),
+                    Vec3::new(3.0 * t.sin(), 2.0, 3.0 * t.cos()),
                     Vec3::new(0.0, 0.0, 0.0),
                     Vec3::UP,
                 );
 
-                // 1. Draw Primary Rotating Gemstone
-                let model = Mat4::rotation_y(t * 1.2) * Mat4::rotation_x(t * 0.8);
+                // 1. Draw Primary Rotating 3D Cube
+                let model = Mat4::rotation_y(t * 0.9) * Mat4::rotation_x(t * 0.5);
                 let mvp = proj * view * model;
                 let _ = duct.set_uniform_mat4("uMVP", &mvp.to_cols_array());
                 let _ = duct.bind_vertex_buffer(vbo);
-                let _ = duct.draw(24, 0);
+                let _ = duct.bind_index_buffer(ibo, DuctIndexFormat::U16);
+                let _ = duct.draw_indexed(36, 0);
 
-                // 2. Draw Floating Satellite Gemstone
-                let sat_model = Mat4::translation(1.8 * (t * 1.5).cos(), 0.5 * (t * 2.0).sin(), 1.8 * (t * 1.5).sin())
+                // 2. Draw Floating Satellite Cube
+                let sat_model = Mat4::translation(2.2 * (t * 1.3).cos(), 0.6 * (t * 1.8).sin(), 2.2 * (t * 1.3).sin())
                     * Mat4::scaling(0.4, 0.4, 0.4)
-                    * Mat4::rotation_y(-t * 2.0);
+                    * Mat4::rotation_y(-t * 2.0)
+                    * Mat4::rotation_z(t * 1.5);
                 let sat_mvp = proj * view * sat_model;
                 let _ = duct.set_uniform_mat4("uMVP", &sat_mvp.to_cols_array());
-                let _ = duct.draw(24, 0);
+                let _ = duct.draw_indexed(36, 0);
 
                 let _ = duct.end_frame();
 
@@ -273,6 +292,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = duct.destroy_render_target(fbo);
                     }
                     let _ = duct.destroy_buffer(vbo);
+                    let _ = duct.destroy_buffer(ibo);
                     let _ = duct.destroy_shader(vs);
                     let _ = duct.destroy_shader(fs);
                     return ControlFlow::Exit;

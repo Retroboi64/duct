@@ -3727,6 +3727,28 @@ impl RenderPipeline for VkPipeline {
         };
 
         let is_dst_swapchain = !dst.is_valid();
+        if is_dst_swapchain && self.swapchain_active && !self.swapchain_image_acquired {
+            if let Some(dfns) = &self.device_fns {
+                if let Some(acquire_fn) = dfns.AcquireNextImageKHR {
+                    let mut img_idx = 0u32;
+                    let acq_res = unsafe {
+                        acquire_fn(
+                            self.device,
+                            self.swapchain,
+                            u64::MAX,
+                            self.image_available_sem,
+                            VK_NULL_HANDLE,
+                            &mut img_idx,
+                        )
+                    };
+                    if acq_res == VK_SUCCESS || acq_res == VK_SUBOPTIMAL_KHR {
+                        self.current_image_index = img_idx;
+                        self.swapchain_image_acquired = true;
+                    }
+                }
+            }
+        }
+
         let dst_img = if is_dst_swapchain {
             if self.swapchain_active && (self.current_image_index as usize) < self.swapchain_images.len() {
                 self.swapchain_images[self.current_image_index as usize]
@@ -3796,7 +3818,7 @@ impl RenderPipeline for VkPipeline {
                         srcAccessMask: VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
                         dstAccessMask: VK_ACCESS_TRANSFER_WRITE_BIT,
                         oldLayout: if is_dst_swapchain {
-                            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                            VK_IMAGE_LAYOUT_UNDEFINED
                         } else {
                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
                         },
@@ -3926,16 +3948,37 @@ impl RenderPipeline for VkPipeline {
 
                 if one_time {
                     let _ = (dfns.EndCommandBuffer)(self.command_buffer);
-                    let submit = VkSubmitInfo {
-                        sType: VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                        pNext: std::ptr::null(),
-                        waitSemaphoreCount: 0,
-                        pWaitSemaphores: std::ptr::null(),
-                        pWaitDstStageMask: std::ptr::null(),
-                        commandBufferCount: 1,
-                        pCommandBuffers: &self.command_buffer,
-                        signalSemaphoreCount: 0,
-                        pSignalSemaphores: std::ptr::null(),
+                    let wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+                    let use_swapchain_sems = is_dst_swapchain
+                        && self.swapchain_active
+                        && self.swapchain_image_acquired
+                        && self.image_available_sem != VK_NULL_HANDLE
+                        && self.render_finished_sem != VK_NULL_HANDLE;
+
+                    let submit = if use_swapchain_sems {
+                        VkSubmitInfo {
+                            sType: VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                            pNext: std::ptr::null(),
+                            waitSemaphoreCount: 1,
+                            pWaitSemaphores: &self.image_available_sem,
+                            pWaitDstStageMask: &wait_stage,
+                            commandBufferCount: 1,
+                            pCommandBuffers: &self.command_buffer,
+                            signalSemaphoreCount: 1,
+                            pSignalSemaphores: &self.render_finished_sem,
+                        }
+                    } else {
+                        VkSubmitInfo {
+                            sType: VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                            pNext: std::ptr::null(),
+                            waitSemaphoreCount: 0,
+                            pWaitSemaphores: std::ptr::null(),
+                            pWaitDstStageMask: std::ptr::null(),
+                            commandBufferCount: 1,
+                            pCommandBuffers: &self.command_buffer,
+                            signalSemaphoreCount: 0,
+                            pSignalSemaphores: std::ptr::null(),
+                        }
                     };
                     let _ = (dfns.QueueSubmit)(self.queue, 1, &submit, VK_NULL_HANDLE);
                     let _ = (dfns.QueueWaitIdle)(self.queue);
