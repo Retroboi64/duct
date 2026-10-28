@@ -31,6 +31,7 @@ pub fn preprocess_glsl(source: &str, stage: DuctShaderStage, for_spirv_push_cons
     let mut processed_lines = Vec::new();
 
     let mut out_loc = 0;
+    let mut sampler_binding = 0;
 
     for line in lines {
         let trimmed = line.trim();
@@ -81,9 +82,28 @@ pub fn preprocess_glsl(source: &str, stage: DuctShaderStage, for_spirv_push_cons
         // 3. Collect loose uniforms (e.g. uniform vec4 uColor;)
         if trimmed.starts_with("uniform ") && trimmed.ends_with(';') && !trimmed.contains('{') && !trimmed.contains('(') {
             let decl = trimmed.trim_start_matches("uniform").trim();
-            // Don't pack samplers into uniform blocks
+            // Don't pack samplers into uniform blocks. Naga GLSL requires separated texture & sampler.
             if decl.starts_with("sampler") {
-                processed_lines.push(format!("layout(binding = 0) uniform {}", decl));
+                let clean = decl.trim_end_matches(';').trim();
+                let parts: Vec<&str> = clean.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let samp_ty = parts[0];
+                    let var_name = parts[1];
+                    let tex_ty = match samp_ty {
+                        "sampler2D" => "texture2D",
+                        "sampler3D" => "texture3D",
+                        "samplerCube" => "textureCube",
+                        "sampler1D" => "texture1D",
+                        _ => "texture2D",
+                    };
+                    let b = sampler_binding;
+                    sampler_binding += 2;
+                    processed_lines.push(format!("layout(set = 0, binding = {}) uniform {} {}_tex;", b, tex_ty, var_name));
+                    processed_lines.push(format!("layout(set = 0, binding = {}) uniform sampler {}_smp;", b + 1, var_name));
+                    processed_lines.push(format!("#define {} {}({}_tex, {}_smp)", var_name, samp_ty, var_name, var_name));
+                } else {
+                    processed_lines.push(format!("layout(binding = 0) uniform {}", decl));
+                }
             } else if for_spirv_push_constants {
                 // If it's a known push constant uniform name, it's covered by _DuctPushConstants
                 let is_known_pc = decl.contains("uColor")
@@ -356,5 +376,27 @@ void main() {
         let hlsl_fs = glsl_to_hlsl(fs, DuctShaderStage::Fragment).expect("Sandbox FS to HLSL");
         assert!(hlsl_fs.contains("SV_Target"));
         println!("FS HLSL:\n{}", hlsl_fs);
+    }
+
+    #[test]
+    fn test_texture_glsl() {
+        let fs = r#"
+            #version 330 core
+            in vec2 vUV;
+            in vec4 vColor;
+            out vec4 FragColor;
+
+            uniform sampler2D uFontTexture;
+
+            void main() {
+                vec4 tex = texture(uFontTexture, vUV);
+                FragColor = vec4(vColor.rgb, vColor.a * tex.a);
+            }
+        "#;
+        let spv = glsl_to_spirv(fs, DuctShaderStage::Fragment).expect("Texture FS to SPIR-V");
+        assert_eq!(spv[0], 0x07230203);
+
+        let hlsl = glsl_to_hlsl(fs, DuctShaderStage::Fragment).expect("Texture FS to HLSL");
+        assert!(hlsl.contains("Sample"));
     }
 }

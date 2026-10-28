@@ -68,6 +68,7 @@ struct VkBufferRecord {
     _buffer_type: DuctBufferType,
 }
 
+#[derive(Copy, Clone)]
 struct VkTextureRecord {
     image: VkImage,
     memory: VkDeviceMemory,
@@ -86,6 +87,7 @@ struct VkRenderTargetRecord {
     width: u32,
     height: u32,
     color_tex: DuctTextureHandle,
+    depth_tex: Option<DuctTextureHandle>,
     depth_image: VkImage,
     depth_memory: VkDeviceMemory,
     depth_view: VkImageView,
@@ -161,6 +163,14 @@ pub struct VkPipeline {
     active_compute_pipeline: vk::VkPipeline,
     wireframe: bool,
     push_constants: VkPushConstantBlock,
+
+    // Descriptors & Textures
+    descriptor_set_layout: VkDescriptorSetLayout,
+    descriptor_pool: VkDescriptorPool,
+    descriptor_set: VkDescriptorSet,
+    bound_textures: [DuctTextureHandle; 8],
+    descriptor_set_dirty: bool,
+    default_white_tex: DuctTextureHandle,
 
     // Command Execution & Sync
     command_pool: VkCommandPool,
@@ -243,6 +253,12 @@ impl Default for VkPipeline {
             active_compute_pipeline: VK_NULL_HANDLE,
             wireframe: false,
             push_constants: VkPushConstantBlock::default(),
+            descriptor_set_layout: VK_NULL_HANDLE,
+            descriptor_pool: VK_NULL_HANDLE,
+            descriptor_set: VK_NULL_HANDLE,
+            bound_textures: [DuctTextureHandle::INVALID; 8],
+            descriptor_set_dirty: false,
+            default_white_tex: DuctTextureHandle::INVALID,
             command_pool: VK_NULL_HANDLE,
             command_buffer: std::ptr::null_mut(),
             cmd_recording: false,
@@ -1129,6 +1145,109 @@ impl VkPipeline {
         }
     }
 
+    fn update_descriptor_set(&mut self) {
+        let dfns = match &self.device_fns {
+            Some(d) if !self.device.is_null() => *d,
+            _ => return,
+        };
+        if self.descriptor_set == VK_NULL_HANDLE {
+            return;
+        }
+
+        let default_tex = self.textures.get(&self.default_white_tex).cloned();
+
+        let mut image_infos = [VkDescriptorImageInfo {
+            sampler: VK_NULL_HANDLE,
+            imageView: VK_NULL_HANDLE,
+            imageLayout: 0,
+        }; 24];
+        let mut writes = Vec::with_capacity(24);
+
+        for slot in 0..8u32 {
+            let bound = self.bound_textures[slot as usize];
+            let rec = self
+                .textures
+                .get(&bound)
+                .cloned()
+                .or_else(|| default_tex.clone());
+
+            if let Some(t) = rec {
+                if t.view != VK_NULL_HANDLE && t.sampler != VK_NULL_HANDLE {
+                    let base_idx = (slot as usize) * 3;
+
+                    // 1. Sampled Image (binding = 2*slot)
+                    image_infos[base_idx] = VkDescriptorImageInfo {
+                        sampler: VK_NULL_HANDLE,
+                        imageView: t.view,
+                        imageLayout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    };
+                    writes.push(VkWriteDescriptorSet {
+                        sType: VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                        pNext: std::ptr::null(),
+                        dstSet: self.descriptor_set,
+                        dstBinding: 2 * slot,
+                        dstArrayElement: 0,
+                        descriptorCount: 1,
+                        descriptorType: VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                        pImageInfo: &image_infos[base_idx],
+                        pBufferInfo: std::ptr::null(),
+                        pTexelBufferView: std::ptr::null(),
+                    });
+
+                    // 2. Sampler (binding = 2*slot + 1)
+                    image_infos[base_idx + 1] = VkDescriptorImageInfo {
+                        sampler: t.sampler,
+                        imageView: VK_NULL_HANDLE,
+                        imageLayout: 0,
+                    };
+                    writes.push(VkWriteDescriptorSet {
+                        sType: VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                        pNext: std::ptr::null(),
+                        dstSet: self.descriptor_set,
+                        dstBinding: 2 * slot + 1,
+                        dstArrayElement: 0,
+                        descriptorCount: 1,
+                        descriptorType: VK_DESCRIPTOR_TYPE_SAMPLER,
+                        pImageInfo: &image_infos[base_idx + 1],
+                        pBufferInfo: std::ptr::null(),
+                        pTexelBufferView: std::ptr::null(),
+                    });
+
+                    // 3. Combined Image Sampler (binding = 16 + slot)
+                    image_infos[base_idx + 2] = VkDescriptorImageInfo {
+                        sampler: t.sampler,
+                        imageView: t.view,
+                        imageLayout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    };
+                    writes.push(VkWriteDescriptorSet {
+                        sType: VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                        pNext: std::ptr::null(),
+                        dstSet: self.descriptor_set,
+                        dstBinding: 16 + slot,
+                        dstArrayElement: 0,
+                        descriptorCount: 1,
+                        descriptorType: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                        pImageInfo: &image_infos[base_idx + 2],
+                        pBufferInfo: std::ptr::null(),
+                        pTexelBufferView: std::ptr::null(),
+                    });
+                }
+            }
+        }
+
+        if !writes.is_empty() {
+            unsafe {
+                (dfns.UpdateDescriptorSets)(
+                    self.device,
+                    writes.len() as u32,
+                    writes.as_ptr(),
+                    0,
+                    std::ptr::null(),
+                );
+            }
+        }
+    }
+
     fn prepare_draw(&mut self) {
         let pso = self.current_pso.unwrap_or(DuctPipelineStateDesc {
             vertex_shader: DuctShaderHandle::INVALID,
@@ -1145,8 +1264,13 @@ impl VkPipeline {
         let pipeline = self.get_or_create_graphics_pipeline(&pso, is_offscreen);
         self.active_graphics_pipeline = pipeline;
 
+        if self.descriptor_set_dirty {
+            self.update_descriptor_set();
+            self.descriptor_set_dirty = false;
+        }
+
         if self.cmd_recording && self.render_pass_active && pipeline != VK_NULL_HANDLE {
-            if let Some(dfns) = &self.device_fns {
+            if let Some(dfns) = self.device_fns {
                 unsafe {
                     (dfns.CmdBindPipeline)(
                         self.command_buffer,
@@ -1161,6 +1285,18 @@ impl VkPipeline {
                         std::mem::size_of::<VkPushConstantBlock>() as u32,
                         &self.push_constants as *const VkPushConstantBlock as *const c_void,
                     );
+                    if self.descriptor_set != VK_NULL_HANDLE && self.pipeline_layout != VK_NULL_HANDLE {
+                        (dfns.CmdBindDescriptorSets)(
+                            self.command_buffer,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            self.pipeline_layout,
+                            0,
+                            1,
+                            &self.descriptor_set,
+                            0,
+                            std::ptr::null(),
+                        );
+                    }
                     if self.last_bound_vbo != VK_NULL_HANDLE {
                         let offset: VkDeviceSize = 0;
                         (dfns.CmdBindVertexBuffers)(
@@ -1473,19 +1609,116 @@ impl RenderPipeline for VkPipeline {
                                     );
                                 }
 
-                                // Create Pipeline Layouts (Graphics with 96-byte Push Constants, and Compute)
+                                // Create Descriptor Set Layout for Textures & Samplers (up to 8 slots)
+                                let mut dsl_bindings = Vec::new();
+                                for i in 0..8u32 {
+                                    // Separated Sampled Image (binding = 2*i)
+                                    dsl_bindings.push(VkDescriptorSetLayoutBinding {
+                                        binding: 2 * i,
+                                        descriptorType: VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                        descriptorCount: 1,
+                                        stageFlags: VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                        pImmutableSamplers: std::ptr::null(),
+                                    });
+                                    // Separated Sampler (binding = 2*i + 1)
+                                    dsl_bindings.push(VkDescriptorSetLayoutBinding {
+                                        binding: 2 * i + 1,
+                                        descriptorType: VK_DESCRIPTOR_TYPE_SAMPLER,
+                                        descriptorCount: 1,
+                                        stageFlags: VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                        pImmutableSamplers: std::ptr::null(),
+                                    });
+                                    // Combined Image Sampler (binding = 16 + i)
+                                    dsl_bindings.push(VkDescriptorSetLayoutBinding {
+                                        binding: 16 + i,
+                                        descriptorType: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                        descriptorCount: 1,
+                                        stageFlags: VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                        pImmutableSamplers: std::ptr::null(),
+                                    });
+                                }
+                                let dsl_info = VkDescriptorSetLayoutCreateInfo {
+                                    sType: VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                    pNext: std::ptr::null(),
+                                    flags: 0,
+                                    bindingCount: dsl_bindings.len() as u32,
+                                    pBindings: dsl_bindings.as_ptr(),
+                                };
+                                unsafe {
+                                    let _ = (dfns.CreateDescriptorSetLayout)(
+                                        device,
+                                        &dsl_info,
+                                        std::ptr::null(),
+                                        &mut self.descriptor_set_layout,
+                                    );
+                                }
+
+                                // Create Descriptor Pool
+                                let pool_sizes = [
+                                    VkDescriptorPoolSize {
+                                        r#type: VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                        descriptorCount: 64,
+                                    },
+                                    VkDescriptorPoolSize {
+                                        r#type: VK_DESCRIPTOR_TYPE_SAMPLER,
+                                        descriptorCount: 64,
+                                    },
+                                    VkDescriptorPoolSize {
+                                        r#type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                        descriptorCount: 64,
+                                    },
+                                ];
+                                let pool_info = VkDescriptorPoolCreateInfo {
+                                    sType: VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                    pNext: std::ptr::null(),
+                                    flags: 0,
+                                    maxSets: 16,
+                                    poolSizeCount: pool_sizes.len() as u32,
+                                    pPoolSizes: pool_sizes.as_ptr(),
+                                };
+                                unsafe {
+                                    let _ = (dfns.CreateDescriptorPool)(
+                                        device,
+                                        &pool_info,
+                                        std::ptr::null(),
+                                        &mut self.descriptor_pool,
+                                    );
+                                }
+
+                                // Allocate initial Descriptor Set
+                                if self.descriptor_pool != VK_NULL_HANDLE
+                                    && self.descriptor_set_layout != VK_NULL_HANDLE
+                                {
+                                    let alloc_info = VkDescriptorSetAllocateInfo {
+                                        sType: VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                        pNext: std::ptr::null(),
+                                        descriptorPool: self.descriptor_pool,
+                                        descriptorSetCount: 1,
+                                        pSetLayouts: &self.descriptor_set_layout,
+                                    };
+                                    unsafe {
+                                        let _ = (dfns.AllocateDescriptorSets)(
+                                            device,
+                                            &alloc_info,
+                                            &mut self.descriptor_set,
+                                        );
+                                    }
+                                }
+
+                                // Create Pipeline Layouts (Graphics with Push Constants and Descriptor Sets, and Compute)
                                 let pc_range = VkPushConstantRange {
                                     stageFlags: VK_SHADER_STAGE_VERTEX_BIT
                                         | VK_SHADER_STAGE_FRAGMENT_BIT,
                                     offset: 0,
                                     size: std::mem::size_of::<VkPushConstantBlock>() as u32,
                                 };
+                                let set_layouts = [self.descriptor_set_layout];
                                 let layout_info = VkPipelineLayoutCreateInfo {
                                     sType: VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                     pNext: std::ptr::null(),
                                     flags: 0,
-                                    setLayoutCount: 0,
-                                    pSetLayouts: std::ptr::null(),
+                                    setLayoutCount: if self.descriptor_set_layout != VK_NULL_HANDLE { 1 } else { 0 },
+                                    pSetLayouts: set_layouts.as_ptr(),
                                     pushConstantRangeCount: 1,
                                     pPushConstantRanges: &pc_range,
                                 };
@@ -1614,6 +1847,13 @@ impl RenderPipeline for VkPipeline {
                                         self.viewport_height,
                                         config.vsync,
                                     );
+
+                                    let white_bytes: [u8; 4] = [255, 255, 255, 255];
+                                    if let Ok(tex) = self.create_texture_2d(1, 1, DuctTextureFormat::Rgba8, Some(&white_bytes)) {
+                                        self.default_white_tex = tex;
+                                        self.descriptor_set_dirty = true;
+                                        self.update_descriptor_set();
+                                    }
                                 }
 
                                 println!(
@@ -1795,6 +2035,24 @@ impl RenderPipeline for VkPipeline {
                         (dfns.DestroyCommandPool)(self.device, self.command_pool, std::ptr::null());
                         self.command_pool = VK_NULL_HANDLE;
                         self.command_buffer = std::ptr::null_mut();
+                    }
+
+                    if self.descriptor_pool != VK_NULL_HANDLE {
+                        (dfns.DestroyDescriptorPool)(self.device, self.descriptor_pool, std::ptr::null());
+                        self.descriptor_pool = VK_NULL_HANDLE;
+                        self.descriptor_set = VK_NULL_HANDLE;
+                    }
+                    if self.descriptor_set_layout != VK_NULL_HANDLE {
+                        (dfns.DestroyDescriptorSetLayout)(self.device, self.descriptor_set_layout, std::ptr::null());
+                        self.descriptor_set_layout = VK_NULL_HANDLE;
+                    }
+                    if self.pipeline_layout != VK_NULL_HANDLE {
+                        (dfns.DestroyPipelineLayout)(self.device, self.pipeline_layout, std::ptr::null());
+                        self.pipeline_layout = VK_NULL_HANDLE;
+                    }
+                    if self.compute_pipeline_layout != VK_NULL_HANDLE {
+                        (dfns.DestroyPipelineLayout)(self.device, self.compute_pipeline_layout, std::ptr::null());
+                        self.compute_pipeline_layout = VK_NULL_HANDLE;
                     }
 
                     (dfns.DestroyDevice)(self.device, std::ptr::null());
@@ -2974,17 +3232,39 @@ impl RenderPipeline for VkPipeline {
                     }
                 }
             }
+            for slot in &mut self.bound_textures {
+                if *slot == handle {
+                    *slot = DuctTextureHandle::INVALID;
+                    self.descriptor_set_dirty = true;
+                }
+            }
             DuctResult::Success
         } else {
             DuctResult::ErrorResourceNotFound
         }
     }
 
-    fn bind_texture(&mut self, _slot: u32, handle: DuctTextureHandle) -> DuctResult {
-        if self.textures.contains_key(&handle) {
-            DuctResult::Success
+    fn bind_texture(&mut self, slot: u32, handle: DuctTextureHandle) -> DuctResult {
+        if (slot as usize) < self.bound_textures.len() {
+            if handle.is_valid() {
+                if self.textures.contains_key(&handle) {
+                    if self.bound_textures[slot as usize] != handle {
+                        self.bound_textures[slot as usize] = handle;
+                        self.descriptor_set_dirty = true;
+                    }
+                    DuctResult::Success
+                } else {
+                    DuctResult::ErrorResourceNotFound
+                }
+            } else {
+                if self.bound_textures[slot as usize] != DuctTextureHandle::INVALID {
+                    self.bound_textures[slot as usize] = DuctTextureHandle::INVALID;
+                    self.descriptor_set_dirty = true;
+                }
+                DuctResult::Success
+            }
         } else {
-            DuctResult::ErrorResourceNotFound
+            DuctResult::ErrorInvalidParameter
         }
     }
 
@@ -3078,8 +3358,9 @@ impl RenderPipeline for VkPipeline {
             _ => return Err(DuctResult::ErrorInvalidState),
         };
 
-        if let Some(tex_rec) = self.textures.get(&color_tex) {
-            if tex_rec.view != VK_NULL_HANDLE {
+        let color_view = self.textures.get(&color_tex).map(|t| t.view).unwrap_or(VK_NULL_HANDLE);
+        let mut depth_tex = None;
+        if color_view != VK_NULL_HANDLE {
                 let target_rp = if desc.has_depth && self.offscreen_render_pass_with_depth != VK_NULL_HANDLE {
                     let depth_info = VkImageCreateInfo {
                         sType: VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -3096,7 +3377,7 @@ impl RenderPipeline for VkPipeline {
                         arrayLayers: 1,
                         samples: VK_SAMPLE_COUNT_1_BIT,
                         tiling: VK_IMAGE_TILING_OPTIMAL,
-                        usage: VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                        usage: VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                         sharingMode: VK_SHARING_MODE_EXCLUSIVE,
                         queueFamilyIndexCount: 0,
                         pQueueFamilyIndices: std::ptr::null(),
@@ -3152,6 +3433,55 @@ impl RenderPipeline for VkPipeline {
                                         &mut depth_view,
                                     );
                                 }
+
+                                let sampler_info = VkSamplerCreateInfo {
+                                    sType: VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                                    pNext: std::ptr::null(),
+                                    flags: 0,
+                                    magFilter: VK_FILTER_LINEAR,
+                                    minFilter: VK_FILTER_LINEAR,
+                                    mipmapMode: VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                    addressModeU: VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                    addressModeV: VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                    addressModeW: VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                    mipLodBias: 0.0,
+                                    anisotropyEnable: VK_FALSE,
+                                    maxAnisotropy: 1.0,
+                                    compareEnable: VK_FALSE,
+                                    compareOp: VK_COMPARE_OP_ALWAYS,
+                                    minLod: 0.0,
+                                    maxLod: 1.0,
+                                    borderColor: 0,
+                                    unnormalizedCoordinates: VK_FALSE,
+                                };
+                                let mut depth_sampler = VK_NULL_HANDLE;
+                                unsafe {
+                                    let _ = (dfns.CreateSampler)(
+                                        self.device,
+                                        &sampler_info,
+                                        std::ptr::null(),
+                                        &mut depth_sampler,
+                                    );
+                                }
+                                let dt_handle = DuctTextureHandle(self.next_handle_id);
+                                self.next_handle_id += 1;
+                                self.textures.insert(
+                                    dt_handle,
+                                    VkTextureRecord {
+                                        image: depth_image,
+                                        memory: depth_memory,
+                                        view: depth_view,
+                                        sampler: depth_sampler,
+                                        width: desc.width,
+                                        height: desc.height,
+                                        vk_format: VK_FORMAT_D32_SFLOAT,
+                                        min_filter: DuctFilterMode::Linear,
+                                        mag_filter: DuctFilterMode::Linear,
+                                        wrap_s: DuctWrapMode::ClampToEdge,
+                                        wrap_t: DuctWrapMode::ClampToEdge,
+                                    },
+                                );
+                                depth_tex = Some(dt_handle);
                             }
                         }
                     }
@@ -3161,7 +3491,7 @@ impl RenderPipeline for VkPipeline {
                 };
 
                 let mut attachments = Vec::new();
-                attachments.push(tex_rec.view);
+                attachments.push(color_view);
                 if desc.has_depth && depth_view != VK_NULL_HANDLE {
                     attachments.push(depth_view);
                 }
@@ -3186,7 +3516,6 @@ impl RenderPipeline for VkPipeline {
                     )
                 };
             }
-        }
 
         let handle = DuctRenderTargetHandle(self.next_handle_id);
         self.next_handle_id += 1;
@@ -3196,6 +3525,7 @@ impl RenderPipeline for VkPipeline {
                 width: desc.width,
                 height: desc.height,
                 color_tex,
+                depth_tex,
                 depth_image,
                 depth_memory,
                 depth_view,
@@ -3218,17 +3548,22 @@ impl RenderPipeline for VkPipeline {
                         if rt.framebuffer != VK_NULL_HANDLE {
                             (dfns.DestroyFramebuffer)(self.device, rt.framebuffer, std::ptr::null());
                         }
-                        if rt.depth_view != VK_NULL_HANDLE {
-                            (dfns.DestroyImageView)(self.device, rt.depth_view, std::ptr::null());
-                        }
-                        if rt.depth_image != VK_NULL_HANDLE {
-                            (dfns.DestroyImage)(self.device, rt.depth_image, std::ptr::null());
-                        }
-                        if rt.depth_memory != VK_NULL_HANDLE {
-                            (dfns.FreeMemory)(self.device, rt.depth_memory, std::ptr::null());
+                        if rt.depth_tex.is_none() {
+                            if rt.depth_view != VK_NULL_HANDLE {
+                                (dfns.DestroyImageView)(self.device, rt.depth_view, std::ptr::null());
+                            }
+                            if rt.depth_image != VK_NULL_HANDLE {
+                                (dfns.DestroyImage)(self.device, rt.depth_image, std::ptr::null());
+                            }
+                            if rt.depth_memory != VK_NULL_HANDLE {
+                                (dfns.FreeMemory)(self.device, rt.depth_memory, std::ptr::null());
+                            }
                         }
                     }
                 }
+            }
+            if let Some(dt) = rt.depth_tex {
+                let _ = self.destroy_texture(dt);
             }
             let _ = self.destroy_texture(rt.color_tex);
             DuctResult::Success
@@ -3351,6 +3686,21 @@ impl RenderPipeline for VkPipeline {
     ) -> Result<DuctTextureHandle, DuctResult> {
         if let Some(rt) = self.render_targets.get(&handle) {
             Ok(rt.color_tex)
+        } else {
+            Err(DuctResult::ErrorResourceNotFound)
+        }
+    }
+
+    fn get_render_target_depth_texture(
+        &mut self,
+        handle: DuctRenderTargetHandle,
+    ) -> Result<DuctTextureHandle, DuctResult> {
+        if let Some(rt) = self.render_targets.get(&handle) {
+            if let Some(dt) = rt.depth_tex {
+                Ok(dt)
+            } else {
+                Err(DuctResult::ErrorUnsupported)
+            }
         } else {
             Err(DuctResult::ErrorResourceNotFound)
         }

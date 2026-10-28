@@ -64,7 +64,8 @@
 
 #### 🟢 Vulkan (`vkduct`)
 - **Pure-Rust SPIR-V Pipeline**: GLSL shaders are preprocessed and cross-compiled directly to SPIR-V 1.0 via `naga` with automatic varying location assignment.
-- **Hardware Push Constants**: High-performance uniform streaming via 112-byte push constant blocks (`uColor`, `uParams`, `uTransform`/`uMVP`/`uModel`, `uExtra`) with default initialized loose uniform globals.
+- **Hardware Push Constants & Descriptor Sets**: High-performance uniform streaming via 112-byte push constant blocks (`uColor`, `uParams`, `uTransform`/`uMVP`/`uModel`, `uExtra`) paired with dynamic `VkDescriptorSet` pools supporting up to 8 texture/sampler slots.
+- **Sampleable Depth Textures**: Offscreen FBOs allocate `D32_SFLOAT` attachments with `VK_IMAGE_USAGE_SAMPLED_BIT` accessible via `get_render_target_depth_texture` for shadow mapping and depth-of-field post-processing.
 - **Clip Space & Viewport**: Handled via negative viewport height (`-height`) to match OpenGL/Direct3D coordinate spaces seamlessly.
 - **Dynamic Memory Updates**: Safe staging and buffer updating preventing offset alignment issues.
 - **Verified Examples**: All 5 examples (`sandbox`, `cube3d`, `lighting3d`, `psx_retro`, `shaders`) run solidly without visual noise or artifacts.

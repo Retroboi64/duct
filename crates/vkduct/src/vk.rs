@@ -94,6 +94,10 @@ pub const VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO: VkStructureType = 28;
 pub const VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO: VkStructureType = 29;
 pub const VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO: VkStructureType = 30;
 pub const VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO: VkStructureType = 31;
+pub const VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO: VkStructureType = 32;
+pub const VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO: VkStructureType = 33;
+pub const VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO: VkStructureType = 34;
+pub const VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET: VkStructureType = 35;
 pub const VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO: VkStructureType = 37;
 pub const VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO: VkStructureType = 38;
 pub const VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO: VkStructureType = 39;
@@ -108,6 +112,19 @@ pub const VK_STRUCTURE_TYPE_PRESENT_INFO_KHR: VkStructureType = 1000001001;
 pub const VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR: VkStructureType = 1000004000;
 pub const VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR: VkStructureType = 1000009000;
 pub const VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT: VkStructureType = 1000217000;
+
+// ── Descriptor Types ────────────────────────────────────────────────────────
+pub const VK_DESCRIPTOR_TYPE_SAMPLER: u32 = 0;
+pub const VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: u32 = 1;
+pub const VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: u32 = 2;
+pub const VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: u32 = 3;
+pub const VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER: u32 = 4;
+pub const VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: u32 = 5;
+pub const VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER: u32 = 6;
+pub const VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: u32 = 7;
+pub const VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC: u32 = 8;
+pub const VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: u32 = 9;
+pub const VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT: u32 = 10;
 
 // ── Enums & Bitflags ────────────────────────────────────────────────────────
 
@@ -749,6 +766,77 @@ pub struct VkPushConstantRange {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+pub struct VkDescriptorSetLayoutBinding {
+    pub binding: u32,
+    pub descriptorType: u32,
+    pub descriptorCount: u32,
+    pub stageFlags: VkFlags,
+    pub pImmutableSamplers: *const VkSampler,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VkDescriptorSetLayoutCreateInfo {
+    pub sType: VkStructureType,
+    pub pNext: *const c_void,
+    pub flags: VkFlags,
+    pub bindingCount: u32,
+    pub pBindings: *const VkDescriptorSetLayoutBinding,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VkDescriptorPoolSize {
+    pub r#type: u32,
+    pub descriptorCount: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VkDescriptorPoolCreateInfo {
+    pub sType: VkStructureType,
+    pub pNext: *const c_void,
+    pub flags: VkFlags,
+    pub maxSets: u32,
+    pub poolSizeCount: u32,
+    pub pPoolSizes: *const VkDescriptorPoolSize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VkDescriptorSetAllocateInfo {
+    pub sType: VkStructureType,
+    pub pNext: *const c_void,
+    pub descriptorPool: VkDescriptorPool,
+    pub descriptorSetCount: u32,
+    pub pSetLayouts: *const VkDescriptorSetLayout,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VkDescriptorImageInfo {
+    pub sampler: VkSampler,
+    pub imageView: VkImageView,
+    pub imageLayout: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VkWriteDescriptorSet {
+    pub sType: VkStructureType,
+    pub pNext: *const c_void,
+    pub dstSet: VkDescriptorSet,
+    pub dstBinding: u32,
+    pub dstArrayElement: u32,
+    pub descriptorCount: u32,
+    pub descriptorType: u32,
+    pub pImageInfo: *const VkDescriptorImageInfo,
+    pub pBufferInfo: *const c_void,
+    pub pTexelBufferView: *const c_void,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
 pub struct VkPipelineLayoutCreateInfo {
     pub sType: VkStructureType,
     pub pNext: *const c_void,
@@ -1215,6 +1303,52 @@ pub struct VkDeviceFns {
         device: VkDevice,
         imageView: VkImageView,
         pAllocator: *const c_void,
+    ),
+
+    // Descriptors
+    pub CreateDescriptorSetLayout: unsafe extern "system" fn(
+        device: VkDevice,
+        pCreateInfo: *const VkDescriptorSetLayoutCreateInfo,
+        pAllocator: *const c_void,
+        pSetLayout: *mut VkDescriptorSetLayout,
+    ) -> VkResult,
+    pub DestroyDescriptorSetLayout: unsafe extern "system" fn(
+        device: VkDevice,
+        descriptorSetLayout: VkDescriptorSetLayout,
+        pAllocator: *const c_void,
+    ),
+    pub CreateDescriptorPool: unsafe extern "system" fn(
+        device: VkDevice,
+        pCreateInfo: *const VkDescriptorPoolCreateInfo,
+        pAllocator: *const c_void,
+        pDescriptorPool: *mut VkDescriptorPool,
+    ) -> VkResult,
+    pub DestroyDescriptorPool: unsafe extern "system" fn(
+        device: VkDevice,
+        descriptorPool: VkDescriptorPool,
+        pAllocator: *const c_void,
+    ),
+    pub AllocateDescriptorSets: unsafe extern "system" fn(
+        device: VkDevice,
+        pAllocateInfo: *const VkDescriptorSetAllocateInfo,
+        pDescriptorSets: *mut VkDescriptorSet,
+    ) -> VkResult,
+    pub UpdateDescriptorSets: unsafe extern "system" fn(
+        device: VkDevice,
+        descriptorWriteCount: u32,
+        pDescriptorWrites: *const VkWriteDescriptorSet,
+        descriptorCopyCount: u32,
+        pDescriptorCopies: *const c_void,
+    ),
+    pub CmdBindDescriptorSets: unsafe extern "system" fn(
+        commandBuffer: VkCommandBuffer,
+        pipelineBindPoint: u32,
+        layout: VkPipelineLayout,
+        firstSet: u32,
+        descriptorSetCount: u32,
+        pDescriptorSets: *const VkDescriptorSet,
+        dynamicOffsetCount: u32,
+        pDynamicOffsets: *const u32,
     ),
 
     // Command Recording
@@ -1702,6 +1836,14 @@ impl VulkanLoader {
                 CmdCopyBufferToImage: load_vk_req!(gdpa, device, "vkCmdCopyBufferToImage", _),
                 CmdCopyImageToBuffer: load_vk_req!(gdpa, device, "vkCmdCopyImageToBuffer", _),
                 CmdBlitImage: load_vk_req!(gdpa, device, "vkCmdBlitImage", _),
+
+                CreateDescriptorSetLayout: load_vk_req!(gdpa, device, "vkCreateDescriptorSetLayout", _),
+                DestroyDescriptorSetLayout: load_vk_req!(gdpa, device, "vkDestroyDescriptorSetLayout", _),
+                CreateDescriptorPool: load_vk_req!(gdpa, device, "vkCreateDescriptorPool", _),
+                DestroyDescriptorPool: load_vk_req!(gdpa, device, "vkDestroyDescriptorPool", _),
+                AllocateDescriptorSets: load_vk_req!(gdpa, device, "vkAllocateDescriptorSets", _),
+                UpdateDescriptorSets: load_vk_req!(gdpa, device, "vkUpdateDescriptorSets", _),
+                CmdBindDescriptorSets: load_vk_req!(gdpa, device, "vkCmdBindDescriptorSets", _),
 
                 CreatePipelineLayout: load_vk_req!(gdpa, device, "vkCreatePipelineLayout", _),
                 DestroyPipelineLayout: load_vk_req!(gdpa, device, "vkDestroyPipelineLayout", _),

@@ -151,6 +151,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "          -> Offscreen FBO Center Pixel Readback (RGBA): {:?}",
                 center_px
             );
+            if let Ok(depth_tex) = duct.get_render_target_depth_texture(rt) {
+                println!(
+                    "          -> Offscreen FBO Sampleable Depth Texture: {:?}",
+                    depth_tex
+                );
+            }
             let _ = duct.bind_render_target(duct::DuctRenderTargetHandle::INVALID);
             Some(rt)
         }
@@ -159,6 +165,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
+
+    // Test Texture 2D upload and binding
+    let checker: [u8; 16] = [
+        255, 0, 0, 255, 0, 255, 0, 255,
+        0, 0, 255, 255, 255, 255, 0, 255,
+    ];
+    let test_tex = duct.create_texture_2d(2, 2, DuctTextureFormat::Rgba8, Some(&checker))?;
+    println!("          -> 2D Texture created & uploaded (Handle: {:?})", test_tex);
+    duct.bind_texture(0, test_tex)?;
+    println!("          -> 2D Texture successfully bound to slot 0!");
 
     // Create an indexed quad buffer for bottom-right base shape demonstration
     let (quad_vbo, quad_ibo) = duct.create_rect_buffers(0.55, -0.82, 0.32, 0.32)?;
