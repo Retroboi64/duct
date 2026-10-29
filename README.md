@@ -32,28 +32,6 @@
 
 ---
 
-### Feature Matrix
-
-| Feature | OpenGL (`glduct`) | DirectX 11 (`dx11duct`) | DirectX 12 (`dx12duct`) | Vulkan (`vkduct`) |
-| :--- | :---: | :---: | :---: | :---: |
-| **Current Usability Status** | 🟢 **Solid / Mature** | 🟢 **Solid** | 🟡 **Working / Preview** | 🟢 **Solid** |
-| **Window Surface & Swapchain Present** | ✅ Working | ✅ Working | ✅ Working | ✅ Working |
-| **Live Backend Hot-Switching (`B` key)**| ✅ Working | ✅ Working | ✅ Working | ✅ Working |
-| **2D Base Shapes (Tri, Rect, Circle, Line)**| ✅ Working | ✅ Working | ✅ Working | ✅ Working |
-| **Custom Shaders (GLSL/HLSL/SPIR-V)** | ✅ Full Native GLSL | ✅ GLSL -> HLSL (Naga) | ✅ GLSL -> HLSL (Naga) | ✅ GLSL -> SPIR-V (Naga) |
-| **Hardware Depth Testing & Depth Write** | ✅ Full D24/D32 buffer | ✅ Working | 🟡 Basic | ✅ Full D32_SFLOAT |
-| **Dynamic Vertex Layouts (UV, Normal, etc.)** | ✅ Full VAO attributes | ✅ Dynamic Input Layouts | 🟡 Basic | ✅ Auto-location mapping |
-| **3D Perspective & Mesh Rendering** | ✅ Full MVP & Depth | ✅ Full MVP & Depth | 🟡 Working | ✅ Full MVP & Depth (Y-flip) |
-| **Uniform Parameter Streaming** | ✅ Cached Locations | ✅ Cached States & CBuffer | ✅ Native Upload Heap | ✅ 112B Push Constants |
-| **Offscreen Render Targets (FBO/RTV)** | ✅ Full Color + Depth | ✅ Color + Depth RTV | 🟡 Color RTV | ✅ Color + Depth Pass |
-| **Render Target Blitting to Window** | ✅ Hardware `glBlit` | ✅ Direct blit | 🟡 In progress | ✅ `vkCmdBlitImage` |
-| **GPU Pixel Readback (Staging)** | ✅ `glReadPixels` | ✅ Staging texture | ✅ Readback buffer | ✅ Staging buffer |
-| **2D Textures & Samplers** | ✅ Working | ✅ Working | 🟡 Working | ✅ Working |
-| **Shader Live Hot-Reloading** | ✅ Full Runtime Link | ✅ Full Runtime Link | ✅ Full Runtime Link | ✅ Full Runtime Link |
-| **Telemetry & Frame Stats** | ✅ Working | ✅ Working | ✅ Working | ✅ Working |
-
----
-
 ### Backend Details
 
 #### 🟢 OpenGL (`glduct`)
@@ -61,23 +39,6 @@
 - **Dynamic Vertex Layouts & VAOs**: Configures vertex array attributes for arbitrary combinations of positions, colors, normals, UVs, and custom strides.
 - **Hardware Depth Testing & HDR**: 24/32-bit depth buffers, HDR offscreen targets (`Rgba16Float`), and sampleable depth textures.
 - **Verified Examples**: `sandbox.rs`, `cube3d.rs`, `psx_retro.rs`, `lighting3d.rs`, and `shaders.rs` all run cleanly.
-
-#### 🟢 Vulkan (`vkduct`)
-- **Pure-Rust SPIR-V Pipeline**: GLSL shaders are preprocessed and cross-compiled directly to SPIR-V 1.0 via `naga` with automatic varying location assignment.
-- **Hardware Push Constants & Descriptor Sets**: High-performance uniform streaming via 112-byte push constant blocks (`uColor`, `uParams`, `uTransform`/`uMVP`/`uModel`, `uExtra`) paired with dynamic `VkDescriptorSet` pools supporting up to 8 texture/sampler slots.
-- **Sampleable Depth Textures**: Offscreen FBOs allocate `D32_SFLOAT` attachments with `VK_IMAGE_USAGE_SAMPLED_BIT` accessible via `get_render_target_depth_texture` for shadow mapping and depth-of-field post-processing.
-- **Clip Space & Viewport**: Handled via negative viewport height (`-height`) to match OpenGL/Direct3D coordinate spaces seamlessly.
-- **Dynamic Memory Updates**: Safe staging and buffer updating preventing offset alignment issues.
-- **Verified Examples**: All 5 examples (`sandbox`, `cube3d`, `lighting3d`, `psx_retro`, `shaders`) run solidly without visual noise or artifacts.
-
-#### 🟢 DirectX 11 (`dx11duct`)
-- **Runtime Cross-Compilation**: Converts GLSL shaders to HLSL `vs_5_0` and `ps_5_0` bytecode at runtime.
-- **Pipeline State Caching**: Caches rasterizer, blend, and depth-stencil state objects in a HashMap keyed by descriptor hashes to avoid recreating GPU objects every frame.
-- **Verified Examples**: All 5 examples run with hardware acceleration and high frame rates.
-
-#### 🟡 DirectX 12 (`dx12duct`)
-- **Native Upload Heaps**: Replaced legacy interop calls with D3D12 native upload buffers and `CopyBufferRegion` with proper GPU resource barriers (`D3D12_RESOURCE_STATE_COPY_DEST` -> `GENERIC_READ`).
-- **Modern Command Queue**: Direct submission with DXGI swapchain presentation.
 
 ---
 
