@@ -46,4 +46,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 ## License
-Dual-licensed under MIT or Apache-2.0.
+Licensed under MIT.

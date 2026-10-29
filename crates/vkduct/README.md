@@ -10,4 +10,4 @@ Hardware-accelerated Vulkan 1.3 graphics backend pipeline module for the [Duct](
 - Staging buffer pixel readback and live shader hot-reloading.
 
 ## License
-Dual-licensed under MIT or Apache-2.0.
+Licensed under MIT.

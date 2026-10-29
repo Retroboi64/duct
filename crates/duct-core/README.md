@@ -9,4 +9,4 @@
 - Unified backend and error enumerations: `DuctResult`, `DuctBackendType`, `DuctShaderStage`, `DuctBufferType`, `DuctTextureFormat`, `DuctFilterMode`, `DuctWrapMode`, `DuctCompareOp`, `DuctCullMode`, `DuctBlendMode`, `DuctIndexFormat`, `DuctVertexFormat`.
 
 ## License
-Dual-licensed under MIT or Apache-2.0.
+Licensed under MIT.

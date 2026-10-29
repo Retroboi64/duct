@@ -10,4 +10,4 @@ Hardware-accelerated DirectX 11 graphics backend pipeline module for the [Duct](
 - Staging texture pixel readback and live shader hot-reloading.
 
 ## License
-Dual-licensed under MIT or Apache-2.0.
+Licensed under MIT.

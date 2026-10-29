@@ -9,4 +9,4 @@ Hardware-accelerated DirectX 12 graphics backend pipeline module for the [Duct](
 - Offscreen render targets, staging readbacks, and live shader hot-reloading.
 
 ## License
-Dual-licensed under MIT or Apache-2.0.
+Licensed under MIT.

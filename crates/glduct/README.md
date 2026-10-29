@@ -10,4 +10,4 @@ Hardware-accelerated OpenGL 3.3 Core graphics backend pipeline module for the [D
 - Dynamic shader compilation, live reloading, and compute shader dispatch.
 
 ## License
-Dual-licensed under MIT or Apache-2.0.
+Licensed under MIT.
